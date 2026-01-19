@@ -51,8 +51,10 @@ service.interceptors.response.use(
     console.error('Request Err:', error)
     let msg = '网络连接失败'
     
-    // === 核心修改：处理 HTTP 状态码层面的 401 ===
     if (error.response) {
+       // 1. 先尝试获取后端返回的错误数据
+       const data = error.response.data 
+
        switch (error.response.status) {
           case 401: 
             msg = '您还未登录，请先登录'
@@ -60,10 +62,19 @@ service.interceptors.response.use(
             localStorage.removeItem('userInfo')
             router.push('/login')
             break;
-          case 403: msg = '拒绝访问 (403)'; break;
-          case 404: msg = '接口地址未找到 (404)'; break;
-          case 500: msg = '服务器内部错误 (500)'; break;
-          default: msg = error.message;
+          // 2. 这里的 res 改为 data（或者 data.msg，取决于你后端结构）
+          // 3. 这里的 | 改为 ||
+          case 403: 
+            msg = (data && data.msg) || '拒绝访问 (403)'; 
+            break;
+          case 404: 
+            msg = (data && data.msg) || '接口地址未找到 (404)'; 
+            break;
+          case 500: 
+            msg = (data && data.msg) || '服务器内部错误 (500)'; 
+            break;
+          default: 
+            msg = (data && data.msg) || error.message;
        }
     }
     

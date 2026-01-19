@@ -5,6 +5,8 @@ import LoginView from '../views/LoginView.vue' // 你原来的登录页
 // 新增的页面
 import SystemLayout from '../views/SystemLayout.vue'
 import DashboardHome from '../views/dashboard/DashboardHome.vue'
+import SettingsView from '../views/dashboard/SettingsView.vue'
+import AiDoctorsView from '../views/dashboard/AiDoctorsView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -27,6 +29,18 @@ const router = createRouter({
           component: DashboardHome 
         },
         // 以后可以在这里加 'health', 'doctors' 等路由
+        { 
+          path: 'settings',  // 对应左侧菜单的 /app/settings
+          name: 'Settings', 
+          component: SettingsView, 
+          meta: { title: '系统设置' } 
+        },
+        {
+          path: 'AIdoctors',
+          name: 'AIDoctors',
+          component: AiDoctorsView,
+          meta: { title: 'AI专家咨询' }
+        }
       ]
     }
   ]

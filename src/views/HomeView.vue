@@ -3,7 +3,7 @@ import { useRouter } from 'vue-router'
 
 const router = useRouter()
 const goToLogin = () => router.push('/login')
-const goToApp = () => router.push('/app')
+const goToApp = () => router.push('/app/AIdoctors')
 </script>
 
 <template>

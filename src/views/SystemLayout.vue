@@ -1,6 +1,43 @@
 <script setup>
+import { useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus' // 引入弹窗组件
+import { logout } from '@/api/user' // 引入刚才写的 api
 import SideMenu from '../components/layout/SideMenu.vue'
-import AIChatPanel from '../components/layout/AIChatPanel.vue'
+
+const router = useRouter()
+
+// === 退出登录逻辑 ===
+const handleLogout = () => {
+  // 1. 弹出二次确认框 (防止手滑)
+  ElMessageBox.confirm(
+    '确定要退出当前账号吗？',
+    '提示',
+    {
+      confirmButtonText: '确定退出',
+      cancelButtonText: '取消',
+      type: 'warning',
+    }
+  ).then(async () => {
+    // 2. 用户点击了“确定”
+    try {
+      // (可选) 通知后端：我要退出了，你那边记录一下日志或者清一下Redis
+      await logout() 
+    } catch (e) {
+      // 即使后端接口报错（比如网断了），前端也要强制退出，所以这里只打印不阻断
+      console.warn('后端退出接口调用失败', e)
+    } finally {
+      // 3. 【核心步骤】清除本地存储的 Token 和用户信息
+      localStorage.removeItem('token')
+      localStorage.removeItem('userInfo')
+      
+      // 4. 提示并跳转回登录页
+      ElMessage.success('已安全退出')
+      router.push('/login')
+    }
+  }).catch(() => {
+    // 用户点击了“取消”，什么都不做
+  })
+}
 </script>
 
 <template>
@@ -16,8 +53,12 @@ import AIChatPanel from '../components/layout/AIChatPanel.vue'
              <span class="absolute top-0.5 right-0.5 w-2 h-2 bg-red-500 rounded-full border border-white"></span>
            </button>
            
-           <button class="bg-red-50 text-red-600 px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-red-100 transition-colors flex items-center gap-2 border border-red-100 shadow-sm active:scale-95">
-             <span class="text-lg animate-pulse">🚨</span> 紧急呼救 SOS
+           <button 
+             @click="handleLogout"
+             class="bg-red-50 text-red-600 px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-red-100 transition-colors flex items-center gap-2 border border-red-100 shadow-sm active:scale-95"
+           >
+             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+             退出登录
            </button>
         </div>
       </header>
@@ -27,12 +68,5 @@ import AIChatPanel from '../components/layout/AIChatPanel.vue'
       </div>
     </main>
 
-    <AIChatPanel class="hidden xl:flex w-96 flex-shrink-0" />
   </div>
 </template>
-
-<style scoped>
-/* 隐藏滚动条但保留功能 */
-.scrollbar-hide::-webkit-scrollbar { display: none; }
-.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
-</style>

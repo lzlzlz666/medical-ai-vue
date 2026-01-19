@@ -19,10 +19,54 @@ export function register(data) {
   })
 }
 
+// 退出登录
+export function logout() {
+  return request({
+    url: '/user/user/logout', // 注意：要和你后端 Controller 的完整路径一致
+    method: 'post'
+  })
+}
+
 // 示例：获取用户信息 (假设你需要)
 export function getUserInfo(id) {
   return request({
     url: `/user/user/${id}`,
     method: 'get'
+  })
+}
+
+// 获取个人详细信息（包含今日健康状态）
+export function getUserProfile() {
+  return request({
+    url: '/user/user/profile', // 对应你的 GET 截图
+    method: 'get'
+  })
+}
+
+// 修改个人信息 (假设接口, 根据你的后端习惯通常是 PUT /user/user)
+export function updateUserProfile(data) {
+  return request({
+    url: '/user/user', 
+    method: 'put',
+    data
+  })
+}
+
+// 修改密码
+export function updateUserPassword(data) {
+  return request({
+    url: '/user/user/password', // 对应你截图里的接口地址
+    method: 'put',
+    data
+  })
+}
+
+// 上传文件接口
+export function uploadFile(data) {
+  return request({
+    url: '/user/common/upload', // 对应你后端的接口
+    method: 'post',
+    headers: { 'Content-Type': 'multipart/form-data' }, // 这一行很关键，告诉 axios 这是文件上传
+    data
   })
 }

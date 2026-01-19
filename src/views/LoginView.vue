@@ -1,14 +1,16 @@
 <script setup>
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
-import { login, register } from '@/api/user' // ✅ 确保引入了 register
+import { login, register } from '@/api/user' 
 import { ElMessage } from 'element-plus'
+import { useUserStore } from '@/stores/user' // 1. 引入 Store
 
 const router = useRouter()
+const userStore = useUserStore() // 2. 初始化 Store
+
 const isLogin = ref(true)
 const isLoading = ref(false)
 
-// === 表单数据 ===
 const loginForm = reactive({
   username: '',
   password: ''
@@ -20,13 +22,11 @@ const registerForm = reactive({
   confirmPassword: ''
 })
 
-// === 核心认证逻辑 ===
 const handleAuth = async () => {
   // ----------------------
   // 场景 A: 注册并自动登录
   // ----------------------
   if (!isLogin.value) {
-    // 1. 前端校验
     if (!registerForm.username || !registerForm.password || !registerForm.confirmPassword) {
       return ElMessage.warning('请填写完整的注册信息')
     }
@@ -36,7 +36,6 @@ const handleAuth = async () => {
 
     isLoading.value = true
     try {
-      // 2. ✅ 第一步：调用注册接口
       await register({
         username: registerForm.username,
         password: registerForm.password
@@ -44,26 +43,27 @@ const handleAuth = async () => {
 
       ElMessage.success('注册成功，已自动登录！')
 
-      // 3. ✅ 第二步：直接调用登录接口 (使用注册填写的账号密码)
+      // 登录
       const data = await login({
         username: registerForm.username,
         password: registerForm.password
       })
 
-      // 4. ✅ 第三步：存储 Token 和用户信息 (和下面登录成功的逻辑一样)
-      localStorage.setItem('token', data.token)
-      localStorage.setItem('userInfo', JSON.stringify({
-        id: data.id, 
-        username: data.userName || registerForm.username
-      }))
+      // ❌ 删除原来的 localStorage 操作
+      // ✅ 使用 Pinia 更新状态 (Store 内部会自动存 localStorage)
+      localStorage.setItem('token', data.token) // Token 单独存还是没问题的，或者放入 Store 也可以
+      
+      userStore.setUserInfo({
+        id: data.id,
+        username: data.username,
+        nickname: data.nickname || data.username,
+        avatar: data.avatar
+      })
 
-      // 5. ✅ 第四步：跳转首页
-      router.push('/app')
+      router.push('/app/AIdoctors')
 
     } catch (error) {
       console.error("注册或自动登录失败:", error)
-      // 注意：如果是注册成功但登录失败（极少见），可能需要切回登录页让用户手动登
-      // 这里简单处理：让用户停留在注册页查看错误信息
     } finally {
       isLoading.value = false
     }
@@ -71,7 +71,7 @@ const handleAuth = async () => {
   }
 
   // ----------------------
-  // 场景 B: 普通登录 (逻辑不变)
+  // 场景 B: 普通登录
   // ----------------------
   if (!loginForm.username || !loginForm.password) {
     return ElMessage.warning("请输入账号和密码")
@@ -87,13 +87,18 @@ const handleAuth = async () => {
 
     ElMessage.success('登录成功，欢迎回来！')
 
+    // 1. 存 Token
     localStorage.setItem('token', data.token)
-    localStorage.setItem('userInfo', JSON.stringify({
+    
+    // 2. ✅ 使用 Pinia 更新用户信息
+    userStore.setUserInfo({
       id: data.id,
-      username: data.userName || loginForm.username
-    }))
+      username: data.username,
+      nickname: data.nickname || data.username,
+      avatar: data.avatar
+    })
 
-    router.push('/app')
+    router.push('/app/AIdoctors')
 
   } catch (error) {
     console.error("登录流程中断:", error)

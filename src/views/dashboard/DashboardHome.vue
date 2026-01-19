@@ -1,11 +1,39 @@
 <script setup>
+import { ref, onMounted } from 'vue' // 1. 引入 onMounted
+import { useRouter } from 'vue-router' // 2. 引入路由用于跳转
+import { ElMessage } from 'element-plus'
 import HealthTrendChart from '../../components/charts/HealthTrendChart.vue'
 
-// 模拟数据 (汉化)
+const router = useRouter()
+const username = ref('用户') // 默认名字
+
+onMounted(() => {
+  // === 1. 从 localStorage 获取用户信息 ===
+  const userInfoStr = localStorage.getItem('userInfo')
+  
+  if (userInfoStr) {
+    try {
+      const userInfo = JSON.parse(userInfoStr)
+      // 获取名字，如果没名字就显示默认的
+      username.value = userInfo.username || userInfo.nickname || '用户'
+    } catch (e) {
+      console.error('用户信息解析失败', e)
+    }
+  } else {
+    // === 2. 关键回答：这里必须手动处理 ===
+    // 因为这个页面目前全是模拟数据，没有发起 API 请求，
+    // 所以 request.js 的 401 拦截器不会触发。
+    // 我们需要在这里手动检查：如果没有数据，直接踢回登录页。
+    ElMessage.warning('未登录，请先登录！')
+    router.push('/login')
+  }
+})
+
+// 模拟数据 (保持不变)
 const vitals = [
   { 
     label: '心率', value: '72', unit: 'bpm', 
-    status: '正常范围', statusType: 'success', // success=绿色
+    status: '正常范围', statusType: 'success',
     icon: 'M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z',
     iconBg: 'bg-green-100', iconColor: 'text-green-600'
   },
@@ -17,7 +45,7 @@ const vitals = [
   },
   { 
     label: '血压', value: '120/80', unit: 'mmHg', 
-    status: '轻微偏高', statusType: 'warning', // warning=橙色
+    status: '轻微偏高', statusType: 'warning',
     icon: 'M13 10V3L4 14h7v7l9-11h-7z', 
     iconBg: 'bg-orange-100', iconColor: 'text-orange-600' 
   },
@@ -27,7 +55,7 @@ const vitals = [
 <template>
   <div class="space-y-8 max-w-6xl">
     <div>
-      <h1 class="text-3xl font-bold text-slate-800">早上好, 林洲</h1>
+      <h1 class="text-3xl font-bold text-slate-800">你好啊😘, {{ username }}</h1>
       <p class="text-slate-500 mt-2">这是您今天的健康数据摘要。</p>
     </div>
 
