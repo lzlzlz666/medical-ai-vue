@@ -28,9 +28,9 @@ export function logout() {
 }
 
 // 示例：获取用户信息 (假设你需要)
-export function getUserInfo(id) {
+export function getUserInfo() {
   return request({
-    url: `/user/user/${id}`,
+    url: '/user/user',
     method: 'get'
   })
 }
