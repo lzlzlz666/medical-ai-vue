@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue' // 1. 引入 onMounted
 import { useRouter } from 'vue-router' // 2. 引入路由用于跳转
 import { ElMessage } from 'element-plus'
-import HealthTrendChart from '../../components/charts/HealthTrendChart.vue'
+import HealthTrendChart from '@/components/charts/HealthTrendChart.vue'
 
 const router = useRouter()
 const username = ref('用户') // 默认名字

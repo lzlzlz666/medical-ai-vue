@@ -60,7 +60,7 @@ const handleAuth = async () => {
         avatar: data.avatar
       })
 
-      router.push('/app/AIdoctors')
+      router.push('/user/ai-consult')
 
     } catch (error) {
       console.error("注册或自动登录失败:", error)
@@ -98,7 +98,7 @@ const handleAuth = async () => {
       avatar: data.avatar
     })
 
-    router.push('/app/AIdoctors')
+    router.push('/user/ai-consult')
 
   } catch (error) {
     console.error("登录流程中断:", error)

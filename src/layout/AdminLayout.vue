@@ -2,7 +2,7 @@
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus' // 引入弹窗组件
 import { logout } from '@/api/user' // 引入刚才写的 api
-import SideMenu from '../components/layout/SideMenu.vue'
+import UserSideMenu from './UserSideMenu.vue'
 
 const router = useRouter()
 
@@ -42,7 +42,7 @@ const handleLogout = () => {
 
 <template>
   <div class="flex h-screen bg-[#F8FAFC] overflow-hidden font-sans text-slate-800">
-    <SideMenu />
+    <UserSideMenu />
 
     <main class="flex-1 flex flex-col min-w-0">
       <header class="h-20 flex items-center justify-between px-8 bg-[#F8FAFC] flex-shrink-0">
