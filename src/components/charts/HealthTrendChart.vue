@@ -1,62 +1,136 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { ref, onMounted, watch, onUnmounted } from 'vue'
 import * as echarts from 'echarts'
 
-const chartRef = ref(null)
+// 接收父组件传来的数据
+const props = defineProps({
+  chartData: {
+    type: Object,
+    default: () => ({
+      dates: [],
+      glucose: [],
+      systolic: [],
+      diastolic: [],
+      heartRate: []
+    })
+  }
+})
 
-onMounted(() => {
-  const myChart = echarts.init(chartRef.value)
+const chartRef = ref(null)
+let myChart = null
+
+// 初始化图表
+const initChart = () => {
+  if (!chartRef.value) return
+  myChart = echarts.init(chartRef.value)
+  setOptions()
   
+  window.addEventListener('resize', resizeChart)
+}
+
+// 配置项 (核心)
+const setOptions = () => {
+  if (!myChart) return
+
   const option = {
-    // 悬浮提示框美化
-    tooltip: { 
+    tooltip: {
       trigger: 'axis',
-      backgroundColor: 'rgba(255, 255, 255, 0.95)',
-      borderColor: '#f1f5f9',
-      borderWidth: 1,
-      textStyle: { color: '#334155', fontSize: 12 },
-      extraCssText: 'box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); border-radius: 8px; padding: 12px;'
+      axisPointer: { type: 'cross' }
     },
-    // 边距调整
-    grid: { left: '2%', right: '2%', bottom: '0%', top: '5%', containLabel: true },
-    xAxis: { 
-      type: 'category', 
-      boundaryGap: false, 
-      data: ['08:00', '10:00', '12:00', '14:00', '16:00', '18:00'], 
-      axisLine: { show: false }, 
-      axisTick: { show: false },
-      axisLabel: { color: '#94a3b8', fontSize: 11, margin: 15 }
+    legend: {
+      data: ['收缩压', '舒张压', '血糖', '心率'],
+      bottom: 0
     },
-    yAxis: { 
-      type: 'value', 
-      splitLine: { lineStyle: { type: 'dashed', color: '#f1f5f9' } },
-      axisLabel: { show: false } // 隐藏Y轴数值，更干净
+    grid: {
+      left: '3%',
+      right: '3%',
+      bottom: '10%',
+      top: '10%',
+      containLabel: true
     },
+    xAxis: {
+      type: 'category',
+      boundaryGap: false,
+      data: props.chartData.dates, // X轴日期
+      axisLine: { lineStyle: { color: '#94a3b8' } }
+    },
+    // 🔥 双 Y 轴配置
+    yAxis: [
+      {
+        type: 'value',
+        name: '血压/心率',
+        position: 'left',
+        min: 0,
+        max: 200, // 血压一般不超过200
+        axisLabel: { color: '#64748b' },
+        splitLine: { lineStyle: { type: 'dashed', color: '#f1f5f9' } }
+      },
+      {
+        type: 'value',
+        name: '血糖 (mmol/L)',
+        position: 'right', // 放在右边
+        min: 0,
+        max: 20, // 血糖一般不超过20
+        axisLabel: { color: '#3b82f6' },
+        splitLine: { show: false } // 右轴不显示网格线，防止太乱
+      }
+    ],
     series: [
+      {
+        name: '收缩压',
+        type: 'line',
+        smooth: true,
+        yAxisIndex: 0, // 使用左轴
+        data: props.chartData.systolic,
+        itemStyle: { color: '#f97316' }, // 橙色
+        lineStyle: { width: 3 }
+      },
+      {
+        name: '舒张压',
+        type: 'line',
+        smooth: true,
+        yAxisIndex: 0, // 使用左轴
+        data: props.chartData.diastolic,
+        itemStyle: { color: '#fdba74' }, // 浅橙色
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: 'rgba(253, 186, 116, 0.5)' },
+            { offset: 1, color: 'rgba(253, 186, 116, 0.0)' }
+          ])
+        }
+      },
+      {
+        name: '心率',
+        type: 'line',
+        smooth: true,
+        yAxisIndex: 0, // 使用左轴
+        data: props.chartData.heartRate,
+        itemStyle: { color: '#ef4444' }, // 红色
+        lineStyle: { type: 'dashed' }
+      },
       {
         name: '血糖',
         type: 'line',
         smooth: true,
-        symbol: 'circle',
-        symbolSize: 8,
-        data: [5.2, 6.1, 7.8, 6.5, 5.4, 5.8],
-        itemStyle: { color: '#0066FF', borderColor: '#fff', borderWidth: 2 },
-        lineStyle: { width: 3, shadowColor: 'rgba(0,102,255,0.2)', shadowBlur: 10 },
-      },
-      {
-        name: '血压',
-        type: 'line',
-        smooth: true,
-        symbol: 'none',
-        data: [118, 120, 122, 119, 121, 120],
-        itemStyle: { color: '#22c55e' },
-        lineStyle: { type: 'dashed', width: 3, color: '#22c55e' }
+        yAxisIndex: 1, // 🔥 这里关键：使用右轴 (index 1)
+        data: props.chartData.glucose,
+        itemStyle: { color: '#3b82f6' }, // 蓝色
+        symbolSize: 6
       }
     ]
   }
-
   myChart.setOption(option)
-  window.addEventListener('resize', () => myChart.resize())
-})
+}
+
+const resizeChart = () => myChart?.resize()
+
+// 监听数据变化，重新渲染
+watch(() => props.chartData, setOptions, { deep: true })
+
+onMounted(initChart)
+onUnmounted(() => window.removeEventListener('resize', resizeChart))
 </script>
-<template><div ref="chartRef" class="w-full h-full"></div></template>
+
+<template>
+  <div ref="chartRef" class="w-full h-full"></div>
+</template>

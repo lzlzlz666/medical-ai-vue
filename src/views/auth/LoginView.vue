@@ -49,10 +49,7 @@ const handleAuth = async () => {
         password: registerForm.password
       })
 
-      // ❌ 删除原来的 localStorage 操作
-      // ✅ 使用 Pinia 更新状态 (Store 内部会自动存 localStorage)
-      localStorage.setItem('token', data.token) // Token 单独存还是没问题的，或者放入 Store 也可以
-      
+      userStore.setToken(data.token)
       userStore.setUserInfo({
         id: data.id,
         username: data.username,
@@ -87,10 +84,8 @@ const handleAuth = async () => {
 
     ElMessage.success('登录成功，欢迎回来！')
 
-    // 1. 存 Token
-    localStorage.setItem('token', data.token)
-    
-    // 2. ✅ 使用 Pinia 更新用户信息
+    // ✅ 使用 Pinia 更新用户信息
+    userStore.setToken(data.token)
     userStore.setUserInfo({
       id: data.id,
       username: data.username,

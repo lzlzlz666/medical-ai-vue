@@ -17,3 +17,13 @@ export function updateHealthRecord(data) {
     data
   })
 }
+
+// 获取健康数据统计
+// type: 'last7Days' | 'month'
+export const getHealthStatistics = (params) => {
+  return request({
+    url: '/user/dashboard/statistics',
+    method: 'get',
+    params
+  })
+}

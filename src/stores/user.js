@@ -2,21 +2,30 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
 export const useUserStore = defineStore('user', () => {
-  // 1. 初始化时，先拿本地缓存顶着（显示旧头像，起码比空白好）
+  // === State ===
+  // 1. Token：初始化时从 localStorage 读取，防止刷新丢失
+  const token = ref(localStorage.getItem('token') || '')
+  
+  // 2. UserInfo：初始化读取
   const userInfo = ref(JSON.parse(localStorage.getItem('userInfo') || '{}'))
 
-  // 2. Actions
+  // === Actions ===
+  
+  // ✅ 新增：专门设置 Token 的方法
+  const setToken = (newToken) => {
+    token.value = newToken
+    localStorage.setItem('token', newToken)
+  }
+
+  // 设置用户信息 (保持你原来的逻辑，稍作优化)
   const setUserInfo = (newInfo) => {
-    // 关键点：使用对象展开运算符 ... 合并旧数据和新数据
-    // 这样如果 newInfo 里只有 avatar，也不会把 username 弄丢
     userInfo.value = { ...userInfo.value, ...newInfo }
     
-    // 确保 nickname 有兜底
+    // 兜底逻辑
     if (!userInfo.value.nickname) {
         userInfo.value.nickname = userInfo.value.username || '访客'
     }
 
-    // 存入 localStorage
     localStorage.setItem('userInfo', JSON.stringify(userInfo.value))
   }
 
@@ -25,11 +34,20 @@ export const useUserStore = defineStore('user', () => {
     localStorage.setItem('userInfo', JSON.stringify(userInfo.value))
   }
   
+  // 登出：同时清理 Token 和 UserInfo
   const logout = () => {
+      token.value = ''
       userInfo.value = {}
+      localStorage.removeItem('token') // 清理缓存
       localStorage.removeItem('userInfo')
-      localStorage.removeItem('token')
   }
 
-  return { userInfo, setUserInfo, updateAvatar, logout }
+  return { 
+    token, 
+    userInfo, 
+    setToken, // 记得导出
+    setUserInfo, 
+    updateAvatar, 
+    logout 
+  }
 })
