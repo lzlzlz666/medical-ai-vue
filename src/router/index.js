@@ -54,22 +54,22 @@ const router = createRouter({
         {
           path: 'dashboard',
           name: 'UserDashboard',
-          component: () => import('@/views/user/dashboard/DashboardHome.vue')
+          component: () => import('@/views/user/DashboardHome.vue')
         },
         {
           path: 'ai-consult',
           name: 'AiConsult',
-          component: () => import('@/views/user/consultation/AiDoctorsView.vue')
+          component: () => import('@/views/user/AiDoctorsView.vue')
         },
         {
           path: 'doctors',
           name: 'Doctors',
-          component: () => import('@/views/user/doctors/Doctors.vue')
+          component: () => import('@/views/user/Doctors.vue')
         },
         {
           path: 'settings',
           name: 'UserSettings',
-          component: () => import('@/views/user/settings/SettingsView.vue')
+          component: () => import('@/views/user/SettingsView.vue')
         }
       ]
     },

@@ -1,271 +1,225 @@
 <script setup>
-import { reactive, ref, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
-import { UserFilled, Lock, Timer, Refresh } from '@element-plus/icons-vue'
-import { getAdminProfile, updateAdminProfile, updateAdminPassword } from '@/api/admin'
+import { ref, reactive, onMounted, onUnmounted, watch } from 'vue'
+import * as echarts from 'echarts'
+import { User, FirstAidKit, OfficeBuilding, Plus } from '@element-plus/icons-vue'
+// 引入 API
+import { getDashboardStatistics } from '@/api/report'
 
-// === 1. 数据定义 ===
-const loading = ref(false)
-const isSubmitting = ref(false)
+// === 1. 顶部卡片数据 (响应式) ===
+// 我们用 reactive 包裹，方便直接更新里面的 value
+const stats = reactive([
+  {
+    key: 'totalUser', // 自定义key，方便匹配
+    title: '用户总数',
+    value: '0', // 初始值
+    icon: User,
+    iconColor: 'text-blue-600',
+    iconBg: 'bg-blue-50'
+  },
+  {
+    key: 'doctorCount',
+    title: '在职医生数',
+    value: '0',
+    icon: FirstAidKit,
+    iconColor: 'text-emerald-500',
+    iconBg: 'bg-emerald-50'
+  },
+  {
+    key: 'deptCount',
+    title: '科室总数',
+    value: '0',
+    icon: OfficeBuilding,
+    iconColor: 'text-orange-500',
+    iconBg: 'bg-orange-50'
+  },
+  {
+    key: 'newUserToday',
+    title: '当日新增用户',
+    value: '0',
+    icon: Plus,
+    iconColor: 'text-purple-500',
+    iconBg: 'bg-purple-50'
+  },
+])
 
-// 个人信息表单
-const userInfo = reactive({
-  id: '',
-  username: '',
-  nickname: '',
-  status: '已激活 (Active)',
-  avatar: '',
-  createTime: '',
-  updateTime: ''
-})
+// === 2. 图表相关 ===
+const chartRef = ref(null)
+let myChart = null
+const timeRange = ref('last7Days') // 默认查近7天，对应后端 type 参数
 
-// 修改密码表单
-const passwordForm = reactive({
-  oldPassword: '',
-  newPassword: '',
-  confirmPassword: ''
-})
-
-// 上传所需的 Header
-const uploadHeaders = {
-  token: localStorage.getItem('admin_token')
-}
-
-// === 2. 核心逻辑 ===
-
-// 加载个人信息
-const loadProfile = async () => {
-  loading.value = true
+// === 3. 核心：加载数据并渲染 ===
+const loadData = async () => {
   try {
-    const res = await getAdminProfile()
-    // 假设后端返回的数据结构是 res (或者 res.data，取决于你的 request.js 封装)
+    // 调用接口，传入当前选择的时间范围
+    const res = await getDashboardStatistics(timeRange.value)
+
     const data = res 
+    // A. 更新顶部卡片数字
+    stats[1].value = data.doctorCount
+    stats[2].value = data.deptCount
     
-    userInfo.id = data.id
-    userInfo.username = data.username
-    userInfo.nickname = data.nickname
-    userInfo.avatar = data.avatar
-    userInfo.createTime = data.createTime
-    userInfo.updateTime = data.updateTime
-    // 如果后端返回 status 1/0，这里做个转换
-    userInfo.status = data.status === 1 ? '已激活 (Active)' : '已禁用'
+    // 取 newUserList 数组的最后一个值作为“当日新增”
+    const totalArr = data.totalUserList ? data.totalUserList.split(',') : []
+    const newArr = data.newUserList ? data.newUserList.split(',') : []
     
+    if (totalArr.length > 0) stats[0].value = totalArr[totalArr.length - 1]
+    if (newArr.length > 0) stats[3].value = newArr[newArr.length - 1]
+
+    // B. 更新图表
+    updateChart(data)
+
   } catch (error) {
-    console.error('获取个人信息失败', error)
-  } finally {
-    loading.value = false
+    console.error('获取统计数据失败', error)
   }
 }
 
-// 🔥 核心修改：头像上传成功后，直接调用更新接口保存到数据库
-const handleAvatarSuccess = async (response) => {
-  if (response.code === 1) {
-    // 1. 本地立即回显
-    const newAvatarUrl = response.data
-    userInfo.avatar = newAvatarUrl
-    
-    // 2. 自动调用保存接口
-    try {
-      await updateAdminProfile({
-        nickname: userInfo.nickname, // 保持当前的昵称
-        avatar: newAvatarUrl         // 更新为新头像
-      })
-      ElMessage.success('头像已更新并保存')
-      
-      // 可选：重新加载以刷新“最后更新时间”
-      // loadProfile() 
-    } catch (error) {
-      console.error(error)
-      ElMessage.warning('头像上传成功，但保存到数据库失败，请手动点击保存')
-    }
-  } else {
-    ElMessage.error(response.msg || '上传失败')
-  }
-}
-
-// 保存所有修改（主要用于修改昵称和密码）
-const handleSaveChanges = async () => {
-  isSubmitting.value = true
-  try {
-    // 1. 保存基础信息 (昵称、头像)
-    await updateAdminProfile({
-      nickname: userInfo.nickname,
-      avatar: userInfo.avatar
-    })
-
-    // 2. 如果填写了密码，尝试修改密码
-    if (passwordForm.oldPassword || passwordForm.newPassword) {
-      if (!passwordForm.oldPassword || !passwordForm.newPassword) {
-        ElMessage.warning('若要修改密码，请填写完整')
-        isSubmitting.value = false // 记得这里要重置 loading 状态
-        return
+// 初始化图表实例
+const initChart = () => {
+  if (!chartRef.value) return
+  myChart = echarts.init(chartRef.value)
+  // 先设置一个空的基础配置，数据等 loadData 填进去
+  const option = {
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: 'rgba(255, 255, 255, 0.9)',
+      borderColor: '#E2E8F0',
+      textStyle: { color: '#1E293B' }
+    },
+    legend: {
+      data: ['当日新增', '总用户数'],
+      bottom: 0,
+      icon: 'circle'
+    },
+    grid: { left: '3%', right: '4%', bottom: '10%', top: '10%', containLabel: true },
+    xAxis: {
+      type: 'category',
+      boundaryGap: false,
+      data: [], // 待填充
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { color: '#94A3B8' }
+    },
+    yAxis: [
+      { type: 'value', name: '新增人数', position: 'left', splitLine: { lineStyle: { type: 'dashed', color: '#F1F5F9' } }, axisLabel: { color: '#94A3B8' } },
+      { type: 'value', name: '总用户数', position: 'right', splitLine: { show: false }, axisLabel: { color: '#94A3B8' } }
+    ],
+    series: [
+      {
+        name: '当日新增',
+        type: 'line',
+        smooth: true,
+        showSymbol: false,
+        lineStyle: { width: 3, color: '#3B82F6' },
+        itemStyle: { color: '#3B82F6' },
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: 'rgba(59, 130, 246, 0.2)' },
+            { offset: 1, color: 'rgba(59, 130, 246, 0.01)' }
+          ])
+        },
+        data: [] // 待填充
+      },
+      {
+        name: '总用户数',
+        type: 'line',
+        yAxisIndex: 1,
+        smooth: true,
+        showSymbol: false,
+        lineStyle: { width: 2, type: 'dashed', color: '#10B981' },
+        itemStyle: { color: '#10B981' },
+        data: [] // 待填充
       }
-      if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-        ElMessage.warning('两次新密码输入不一致')
-        isSubmitting.value = false
-        return
-      }
-      
-      await updateAdminPassword({
-        oldPassword: passwordForm.oldPassword,
-        newPassword: passwordForm.newPassword
-      })
-      
-      // 清空密码表单
-      passwordForm.oldPassword = ''
-      passwordForm.newPassword = ''
-      passwordForm.confirmPassword = ''
-      ElMessage.success('信息与密码已修改')
-    } else {
-      ElMessage.success('个人信息更新成功')
-    }
-    
-    // 重新加载以获取最新 updateTime
-    loadProfile()
-    
-  } catch (error) {
-    console.error(error)
-  } finally {
-    isSubmitting.value = false
+    ]
   }
+  myChart.setOption(option)
 }
 
-// 初始化
+// 更新图表数据
+const updateChart = (data) => {
+  if (!myChart) return
+
+  // 后端返回的是逗号分隔的字符串，需要转为数组
+  const dateList = data.dateList ? data.dateList.split(',') : []
+  const newUserList = data.newUserList ? data.newUserList.split(',') : []
+  const totalUserList = data.totalUserList ? data.totalUserList.split(',') : []
+
+  myChart.setOption({
+    xAxis: {
+      data: dateList
+    },
+    series: [
+      {
+        name: '当日新增',
+        data: newUserList
+      },
+      {
+        name: '总用户数',
+        data: totalUserList
+      }
+    ]
+  })
+}
+
+// 切换时间范围 (近7天 / 近30天)
+const handleTimeChange = (type) => {
+  timeRange.value = type
+  loadData() // 重新请求数据
+}
+
+// 响应式调整
+const handleResize = () => myChart && myChart.resize()
+
 onMounted(() => {
-  loadProfile()
+  initChart()
+  loadData() // 页面加载时请求数据
+  window.addEventListener('resize', handleResize)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', handleResize)
+  if (myChart) myChart.dispose()
 })
 </script>
 
 <template>
-  <div class="flex flex-col lg:flex-row gap-6 min-h-[calc(100vh-140px)]" v-loading="loading">
-    
-    <div class="w-full lg:w-1/3 xl:w-1/4 space-y-6">
-      <div class="bg-white rounded-2xl p-8 shadow-sm border border-slate-100 flex flex-col items-center text-center">
-        
-        <el-upload
-          class="avatar-uploader"
-          action="/api/admin/common/upload"
-          :show-file-list="false"
-          :on-success="handleAvatarSuccess"
-          name="file"
-          :headers="uploadHeaders"
-        >
-          <div class="relative mb-6 group cursor-pointer">
-            <div class="w-32 h-32 rounded-full p-1 bg-gradient-to-tr from-blue-400 to-teal-400">
-               <img 
-                 :src="userInfo.avatar || 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'" 
-                 class="w-full h-full rounded-full object-cover border-4 border-white" 
-               />
-            </div>
-            <div class="absolute inset-0 bg-black/40 rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-              <span class="text-white text-xs font-bold">点击更换</span>
-            </div>
+  <div class="space-y-6">
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div v-for="(item, index) in stats" :key="index" class="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
+        <div class="flex justify-between items-start mb-4">
+          <div>
+            <div class="text-slate-500 text-sm font-medium mb-1">{{ item.title }}</div>
+            <div class="text-3xl font-bold text-slate-800">{{ item.value }}</div>
           </div>
-        </el-upload>
-        
-        <h2 class="text-2xl font-bold text-slate-800 mb-1">{{ userInfo.username }}</h2>
-        <p class="text-slate-500 text-sm mb-6">{{ userInfo.nickname || '未设置昵称' }}</p>
-
-        <div class="w-full space-y-4">
-          <div class="flex justify-between items-center text-sm py-3 border-b border-slate-50">
-            <span class="text-slate-500 font-medium">账号状态</span>
-            <span class="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold">
-              {{ userInfo.status }}
-            </span>
-          </div>
-          <div class="flex justify-between items-center text-sm py-2">
-            <span class="text-slate-500 font-medium">角色昵称</span>
-            <span class="text-blue-600 font-bold">{{ userInfo.nickname }}</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
-        <h3 class="font-bold text-slate-800 mb-4">时间统计</h3>
-        <div class="space-y-4">
-          <div class="flex gap-4 items-start">
-             <div class="mt-1 text-slate-400"><el-icon><Timer /></el-icon></div>
-             <div>
-               <div class="text-xs text-slate-400 mb-1">创建时间</div>
-               <div class="text-sm font-medium text-slate-700">{{ userInfo.createTime }}</div>
-             </div>
-          </div>
-          <div class="flex gap-4 items-start">
-             <div class="mt-1 text-slate-400"><el-icon><Refresh /></el-icon></div>
-             <div>
-               <div class="text-xs text-slate-400 mb-1">最后更新</div>
-               <div class="text-sm font-medium text-slate-700">{{ userInfo.updateTime }}</div>
-             </div>
+          <div :class="['p-3 rounded-xl', item.iconBg]">
+            <component :is="item.icon" :class="['w-6 h-6', item.iconColor]" />
           </div>
         </div>
       </div>
     </div>
 
-    <div class="flex-1 space-y-6">
-      
-      <div class="bg-white rounded-2xl p-8 shadow-sm border border-slate-100">
-        <div class="flex items-center gap-2 mb-6 border-b border-slate-100 pb-4">
-          <el-icon class="text-blue-500 text-xl"><UserFilled /></el-icon>
-          <h3 class="text-lg font-bold text-slate-800">基本信息</h3>
+    <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
+      <div class="flex justify-between items-center mb-6">
+        <div>
+          <h3 class="text-lg font-bold text-slate-800">用户增长趋势</h3>
+          <p class="text-slate-400 text-sm mt-1">过去{{ timeRange === 'last7Days' ? '7' : '30' }}天的每日活跃及新增用户数据</p>
         </div>
-
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div class="space-y-2">
-            <label class="text-sm font-bold text-slate-600">管理员 ID</label>
-            <el-input v-model="userInfo.id" disabled class="bg-slate-50">
-              <template #suffix><el-icon class="text-slate-400"><Lock /></el-icon></template>
-            </el-input>
-          </div>
-          <div class="space-y-2">
-            <label class="text-sm font-bold text-slate-600">用户名</label>
-            <el-input v-model="userInfo.username" disabled class="bg-slate-50">
-              <template #suffix><el-icon class="text-slate-400"><Lock /></el-icon></template>
-            </el-input>
-          </div>
-          <div class="col-span-1 md:col-span-2 space-y-2">
-            <label class="text-sm font-bold text-slate-600">昵称</label>
-            <el-input v-model="userInfo.nickname" placeholder="请输入显示昵称" size="large" />
-          </div>
-        </div>
-      </div>
-
-      <div class="bg-white rounded-2xl p-8 shadow-sm border border-slate-100">
-        <div class="flex items-center gap-2 mb-6 border-b border-slate-100 pb-4">
-          <el-icon class="text-blue-500 text-xl"><Lock /></el-icon>
-          <h3 class="text-lg font-bold text-slate-800">修改密码</h3>
-        </div>
-
-        <div class="space-y-6">
-          <div class="space-y-2">
-            <label class="text-sm font-bold text-slate-600">当前密码</label>
-            <el-input v-model="passwordForm.oldPassword" type="password" show-password placeholder="请输入当前密码以验证身份" size="large" />
-          </div>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div class="space-y-2">
-              <label class="text-sm font-bold text-slate-600">新密码</label>
-              <el-input v-model="passwordForm.newPassword" type="password" show-password placeholder="请输入新密码" size="large" />
-            </div>
-            <div class="space-y-2">
-              <label class="text-sm font-bold text-slate-600">确认新密码</label>
-              <el-input v-model="passwordForm.confirmPassword" type="password" show-password placeholder="请再次输入新密码" size="large" />
-            </div>
-          </div>
-        </div>
-
-        <div class="mt-8 flex justify-end gap-4">
-          <el-button text class="!text-slate-500">取消修改</el-button>
-          <el-button 
-            type="primary" 
-            size="large" 
-            class="!px-8 !font-bold !rounded-xl" 
-            :loading="isSubmitting"
-            @click="handleSaveChanges"
+        <div class="bg-slate-100 p-1 rounded-lg flex text-xs font-bold text-slate-500">
+          <button 
+            @click="handleTimeChange('last7Days')"
+            :class="['px-4 py-1.5 rounded-md transition-all', timeRange === 'last7Days' ? 'bg-white text-slate-800 shadow-sm' : 'hover:text-slate-700']"
           >
-            保存所有修改
-          </el-button>
+            近7天
+          </button>
+          <button 
+            @click="handleTimeChange('last30Days')"
+            :class="['px-4 py-1.5 rounded-md transition-all', timeRange === 'last30Days' ? 'bg-white text-slate-800 shadow-sm' : 'hover:text-slate-700']"
+          >
+            近30天
+          </button>
         </div>
       </div>
-
+      
+      <div ref="chartRef" class="w-full h-[400px]"></div>
     </div>
   </div>
 </template>
