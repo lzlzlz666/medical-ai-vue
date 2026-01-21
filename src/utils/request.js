@@ -39,7 +39,7 @@ service.interceptors.request.use(
     
     return config
   },
-  error => Promise.reject(error)
+  error =>  Promise.reject(error)
 )
 
 // === 2. 响应拦截器：处理不同角色的 401 ===

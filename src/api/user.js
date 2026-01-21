@@ -70,3 +70,33 @@ export function uploadFile(data) {
     data
   })
 }
+
+// 1. 分页查询用户
+// 后端参数: page, pageSize, keyword, status
+export function getUserPage(params) {
+  return request({
+    url: '/admin/user/page',
+    method: 'get',
+    params
+  })
+}
+
+// 2. 启用/禁用用户
+// 后端接口: @PostMapping("/status/{status}")  参数 id 用 param 传
+export function updateUserStatus(status, id) {
+  return request({
+    url: `/admin/user/status/${status}`,
+    method: 'post',
+    params: { id }
+  })
+}
+
+// 3. 重置密码
+// 后端接口: @PutMapping("/resetPassword")
+export function resetUserPassword(id) {
+  return request({
+    url: '/admin/user/resetPassword',
+    method: 'put',
+    params: { id }
+  })
+}

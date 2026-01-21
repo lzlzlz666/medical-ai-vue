@@ -1,174 +1,155 @@
 <script setup>
-import { ref, computed } from 'vue'
-import { Search, Filter, Timer, StarFilled, Bell, Calendar, ArrowRight, Checked } from '@element-plus/icons-vue' // 引入 Checked 图标
+import { ref, computed, onMounted, reactive } from 'vue'
+import { Search, Filter, Timer, StarFilled, ArrowRight, Checked } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+// 引入刚刚定义的 API
+import { getDoctorPage } from '@/api/doctor'
+import { getDepartments } from '@/api/department'
 
-// === 1. 状态与筛选 ===
-const searchQuery = ref('')
-const specialtyFilter = ref('')
+// === 1. 状态管理 ===
+const loading = ref(false)
+const searchQuery = ref('') // 对应 realName
+const specialtyFilter = ref('') // 对应 deptId (注意：现在存的是 ID)
+const isOnlineOnly = ref(false) // 新增：只看在线医生
 const currentPage = ref(1)
 const pageSize = ref(8)
+const total = ref(0) // 总条数
 
-// 针对慢性病平台的特定科室
-const specialties = ['内分泌科', '心血管内科', '呼吸内科', '神经内科', '肾内科', '康复医学科']
+const departmentList = ref([]) // 真实科室列表
+const doctorList = ref([]) // 真实医生列表
 
-// === 2. 模拟数据：最近合作的专家 ===
-const recentConsultations = [
-  {
-    id: 101,
-    name: '李华 主任医师',
-    specialty: '内分泌科',
-    availability: '今日可审', // 文案调整
-    date: '昨天',
-    avatarBg: 'bg-blue-100',
-    avatarText: '李',
-    avatarColor: 'text-blue-600'
-  },
-  {
-    id: 102,
-    name: '张伟 副主任医师',
-    specialty: '心血管内科',
-    availability: '明日可审',
-    date: '2周前',
-    avatarBg: 'bg-green-100',
-    avatarText: '张',
-    avatarColor: 'text-green-600'
-  }
+// === 2. 静态配置（用于 UI 美化，后端没存这些） ===
+// 慢性病标签映射 (前端根据科室名手动匹配，保持界面好看)
+const chronicTagsMap = {
+  '内分泌科': ['糖尿病', '甲状腺', '痛风'],
+  '心血管内科': ['高血压', '冠心病', '心衰'],
+  '呼吸与危重症医学科': ['慢阻肺', '哮喘', '肺结节'],
+  '神经内科': ['脑卒中', '帕金森', '失眠'],
+  // 默认兜底
+  'default': ['慢病管理', '健康咨询']
+}
+// 头像背景色池
+const avatarColors = [
+  { bg: 'bg-orange-50', text: 'text-orange-600' },
+  { bg: 'bg-purple-50', text: 'text-purple-600' },
+  { bg: 'bg-blue-50', text: 'text-blue-600' },
+  { bg: 'bg-teal-50', text: 'text-teal-600' }
 ]
 
-// === 3. 模拟数据：医生列表 ===
-const chronicTags = {
-  '内分泌科': ['糖尿病', '甲状腺', '痛风', '肥胖症'],
-  '心血管内科': ['高血压', '冠心病', '心衰', '动脉硬化'],
-  '呼吸内科': ['慢阻肺', '哮喘', '慢性咳嗽', '肺结节'],
-  '神经内科': ['脑卒中康复', '帕金森', '偏头痛', '癫痫'],
-  '肾内科': ['慢性肾炎', '肾功能不全', '尿毒症'],
-  '康复医学科': ['运动康复', '术后恢复', '疼痛管理']
+// === 3. 数据获取逻辑 ===
+
+// 获取科室列表
+const loadDepartments = async () => {
+  try {
+    const res = await getDepartments() // res 已经是 data 数组了 (request.js处理过)
+    departmentList.value = res || []
+  } catch (error) {
+    console.error('获取科室失败', error)
+  }
 }
 
-const allDoctors = Array.from({ length: 24 }).map((_, index) => {
-  const specialty = specialties[index % specialties.length]
-  const tags = chronicTags[specialty] || []
+// 获取医生分页数据
+const loadDoctors = async () => {
+  loading.value = true
+  try {
+    const params = {
+      page: currentPage.value,
+      pageSize: pageSize.value,
+      realName: searchQuery.value || null, // 空字符串转 null
+      deptId: specialtyFilter.value || null,
+      workStatus: isOnlineOnly.value ? 1 : null // 勾选则只查 status=1 (在线)
+    }
+
+    const res = await getDoctorPage(params)
+    // 根据你的截图，res 结构是 { total, records: [...] }
+    if (res) {
+      doctorList.value = res.records.map((doc, index) => processDoctorData(doc, index))
+      total.value = res.total
+    }
+  } catch (error) {
+    console.error('获取医生列表失败', error)
+  } finally {
+    loading.value = false
+  }
+}
+
+// 数据预处理：把后端数据转成前端 UI 需要的格式
+const processDoctorData = (doc, index) => {
+  const colorStyle = avatarColors[index % avatarColors.length]
+  const deptName = doc.deptName || '综合科'
   
   return {
-    id: index + 1,
-    name: ['王强', '陈静', '刘洋', '赵敏', '孙赫', '周杰'][index % 6] + (index + 1),
-    title: ['主任医师', '副主任医师', '主治医师'][index % 3],
-    specialty: specialty,
-    rating: (4.6 + Math.random() * 0.4).toFixed(1),
-    reviewCount: Math.floor(Math.random() * 300) + 80, // 这里代表“已审核次数”
-    // 逻辑调整：今日名额限制
-    availability: index % 3 === 0 ? '名额充足' : (index % 3 === 1 ? '仅剩1席' : '今日额满'),
-    availabilityType: index % 3 === 0 ? 'success' : (index % 3 === 1 ? 'warning' : 'info'),
-    tags: tags.slice(0, 2),
-    isOnline: Math.random() > 0.4,
-    avatarBg: ['bg-orange-50', 'bg-purple-50', 'bg-pink-50', 'bg-indigo-50'][index % 4],
-    avatarText: ['王', '陈', '刘', '赵', '孙', '周'][index % 6]
+    ...doc,
+    // 如果后端没头像，取名字第一个字
+    avatarText: doc.realName ? doc.realName.charAt(0) : '医', 
+    avatarBg: colorStyle.bg,
+    avatarColor: colorStyle.text,
+    
+    // 标签匹配
+    tags: chronicTagsMap[deptName] || chronicTagsMap['default'],
+    
+    // 状态逻辑转换
+    isOnline: doc.workStatus === 1,
+    availabilityText: doc.workStatus === 1 ? `今日还可被 ${doc.maxDailyAudit || 0} 人申请` : '暂不在线',
+    canAudit: doc.workStatus === 1 && doc.maxDailyAudit > 0
   }
-})
+}
 
-// === 4. 计算属性 ===
-const filteredDoctors = computed(() => {
-  return allDoctors.filter(doc => {
-    const matchQuery = doc.name.includes(searchQuery.value) || 
-                       doc.specialty.includes(searchQuery.value) ||
-                       doc.tags.some(t => t.includes(searchQuery.value))
-    const matchSpecialty = !specialtyFilter.value || doc.specialty === specialtyFilter.value
-    return matchQuery && matchSpecialty
-  })
-})
+// === 4. 事件处理 ===
 
-const paginatedDoctors = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value
-  const end = start + pageSize.value
-  return filteredDoctors.value.slice(start, end)
-})
+// 搜索/筛选触发
+const handleFilter = () => {
+  currentPage.value = 1 // 重置到第一页
+  loadDoctors()
+  ElMessage.success('列表已更新')
+}
 
-// === 5. 核心逻辑方法 ===
+// 翻页
 const handlePageChange = (page) => {
   currentPage.value = page
+  loadDoctors()
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
-const handleFilter = () => {
-  currentPage.value = 1
-  ElMessage.success('筛选已更新')
+// 申请审核
+const handleApplyAudit = (doctor) => {
+  if (!doctor.canAudit) {
+    ElMessage.warning(`抱歉，${doctor.realName} 当前无法接受审核申请。`)
+    return
+  }
+  ElMessage.success({
+    message: `已向 ${doctor.realName} 发送审核邀请`,
+    duration: 3000
+  })
 }
 
-// 🔥 核心改名：applyAudit (申请审核)
-const handleApplyAudit = (doctor) => {
-  if (doctor.availability === '今日额满') {
-    ElMessage.warning(`抱歉，${doctor.name} 今日审核名额（3个）已用完，请明天再试。`)
-  } else {
-    // 这里模拟发送请求
-    ElMessage.success({
-      message: `已邀请 ${doctor.name} 审核您的AI问诊记录，请留意消息通知。`,
-      duration: 3000
-    })
-    // 实际逻辑：调用后端接口，把当前对话ID传给医生
-    // api.audit.apply({ doctorId: doctor.id, conversationId: currentId })
-  }
-}
+// === 5. 初始化 ===
+onMounted(() => {
+  loadDepartments()
+  loadDoctors()
+})
 </script>
 
 <template>
-  <div class="max-w-7xl mx-auto space-y-8 min-h-screen pb-10">
+  <div class="max-w-7xl mx-auto space-y-8 min-h-screen pb-10" v-loading="loading">
     
     <div class="flex flex-col md:flex-row justify-between items-center gap-4">
       <div>
         <h1 class="text-3xl font-bold text-slate-800">专家介入审核 👨‍⚕️</h1>
-        <p class="text-slate-500 mt-1">邀请三甲专家对 AI 诊断结果进行二次复核，确保方案准确安全</p>
-        <p class="text-xs text-slate-400 mt-1 flex items-center gap-1">
-          <el-icon><Checked /></el-icon>
-          注: 为保证审核质量，每位专家每日仅接受 3 次 AI 问答复核申请
-        </p>
-      </div>
-      <div class="flex gap-3">
-        <el-button type="primary" color="#3b82f6" :icon="Calendar" class="!px-6 !font-bold !rounded-xl shadow-md hover:shadow-lg transition-all">
-          我的审核记录
-        </el-button>
+        <p class="text-slate-500 mt-1">邀请三甲专家对 AI 诊断结果进行二次复核</p>
       </div>
     </div>
 
-    <section v-if="recentConsultations.length > 0">
-      <div class="mb-4">
-        <h2 class="text-lg font-bold text-slate-800">最近合作专家</h2>
-      </div>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
-        <div v-for="item in recentConsultations" :key="item.id" class="bg-white p-5 rounded-2xl border border-slate-100 flex items-center justify-between shadow-sm hover:shadow-md transition-all group">
-          <div class="flex items-center gap-4">
-            <div :class="['w-14 h-14 rounded-xl flex items-center justify-center text-xl font-bold transition-colors', item.avatarBg, item.avatarColor]">
-              {{ item.avatarText }}
-            </div>
-            <div>
-              <div class="font-bold text-slate-800 text-lg">{{ item.name }}</div>
-              <div class="text-xs text-slate-500 mt-0.5">{{ item.specialty }} • 上次审核: {{ item.date }}</div>
-            </div>
-          </div>
-          <div>
-            <el-button 
-              type="primary" 
-              plain 
-              round
-              class="!font-bold !border-blue-200 hover:!bg-blue-50"
-              @click="handleApplyAudit(item)"
-            >
-              再次邀请审核
-            </el-button>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section class="bg-white p-5 rounded-3xl shadow-md border border-slate-100/80 flex flex-col lg:flex-row items-center gap-4 transition-all hover:shadow-lg">
+    <section class="bg-white p-5 rounded-3xl shadow-md border border-slate-100/80 flex flex-col lg:flex-row items-center gap-4">
       <div class="flex-1 w-full lg:w-auto">
         <el-input
           v-model="searchQuery"
-          placeholder="搜索专家姓名 / 专科方向..."
+          placeholder="搜索专家姓名..."
           size="large"
           class="w-full search-input-custom"
           :prefix-icon="Search"
           clearable
+          @clear="handleFilter"
           @keyup.enter="handleFilter"
         />
       </div>
@@ -176,56 +157,72 @@ const handleApplyAudit = (doctor) => {
       <div class="flex flex-col sm:flex-row gap-3 w-full lg:w-auto items-center">
         <el-select 
           v-model="specialtyFilter" 
-          placeholder="选择审核专科" 
+          placeholder="全科室" 
           size="large" 
           class="w-full sm:w-56 filter-select-custom" 
           clearable
+          @change="handleFilter"
         >
           <template #prefix><el-icon class="text-slate-400"><Filter /></el-icon></template>
-          <el-option v-for="item in specialties" :key="item" :label="item" :value="item" />
+          <el-option 
+            v-for="item in departmentList" 
+            :key="item.id" 
+            :label="item.name" 
+            :value="item.id" 
+          />
         </el-select>
         
+        <el-checkbox 
+            v-model="isOnlineOnly" 
+            label="仅看在线" 
+            size="large" 
+            border 
+            class="!mr-0 !rounded-xl !bg-slate-50"
+            @change="handleFilter"
+        />
+
         <el-button 
           size="large" 
           type="primary" 
           color="#3b82f6" 
           :icon="Search" 
-          class="w-full sm:w-auto !font-bold !px-8 !rounded-xl shadow-sm hover:shadow-md transition-all active:scale-95"
+          class="w-full sm:w-auto !font-bold !px-8 !rounded-xl"
           @click="handleFilter"
         >
-          查找专家
+          查找
         </el-button>
       </div>
     </section>
 
     <section>
       <div class="flex justify-between items-center mb-6">
-        <h2 class="text-lg font-bold text-slate-800">可邀请专家</h2>
-        <span class="text-sm text-slate-500">共找到 {{ filteredDoctors.length }} 位审核专家</span>
+        <h2 class="text-lg font-bold text-slate-800">专家列表</h2>
+        <span class="text-sm text-slate-500">共找到 {{ total }} 位专家</span>
+      </div>
+
+      <div v-if="doctorList.length === 0 && !loading" class="text-center py-20 text-slate-400">
+        <p>暂无符合条件的医生</p>
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-        <div v-for="doc in paginatedDoctors" :key="doc.id" class="bg-white rounded-3xl p-6 border border-slate-100 hover:border-blue-200 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 group flex flex-col items-center text-center relative overflow-hidden">
+        <div v-for="doc in doctorList" :key="doc.id" class="bg-white rounded-3xl p-6 border border-slate-100 hover:border-blue-200 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 group flex flex-col items-center text-center relative overflow-hidden">
           
           <span v-if="doc.isOnline" class="absolute top-4 right-4 flex items-center gap-1 bg-green-50 px-2 py-0.5 rounded-full border border-green-100">
             <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
             <span class="text-[10px] text-green-600 font-bold">在线</span>
           </span>
+          <span v-else class="absolute top-4 right-4 text-[10px] text-slate-400 bg-slate-50 px-2 py-0.5 rounded-full">离线</span>
 
-          <div :class="['w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold mb-4 shadow-sm transition-transform group-hover:scale-110', doc.avatarBg, 'text-slate-700']">
+          <div :class="['w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold mb-4 shadow-sm transition-transform group-hover:scale-110', doc.avatarBg, doc.avatarColor]">
             {{ doc.avatarText }}
           </div>
 
-          <h3 class="text-lg font-bold text-slate-800">{{ doc.name }}</h3>
-          <div class="text-sm text-brand-blue font-medium mb-1">{{ doc.specialty }} · {{ doc.title }}</div>
-          
-          <div class="flex items-center gap-1 mb-4">
-            <el-icon class="text-yellow-400"><StarFilled /></el-icon>
-            <span class="text-sm font-bold text-slate-700">{{ doc.rating }}</span>
-            <span class="text-xs text-slate-400">({{ doc.reviewCount }} 次审核)</span>
+          <h3 class="text-lg font-bold text-slate-800">{{ doc.realName }}</h3>
+          <div class="text-sm text-brand-blue font-medium mb-1">
+             {{ doc.deptName || '暂无科室' }} · {{ doc.title || '医师' }}
           </div>
-
-          <div class="flex flex-wrap justify-center gap-2 mb-4 h-[28px] overflow-hidden">
+          
+          <div class="flex flex-wrap justify-center gap-2 mb-4 h-[28px] overflow-hidden mt-2">
              <span v-for="tag in doc.tags" :key="tag" class="px-2 py-0.5 rounded text-[10px] bg-slate-50 text-slate-500 border border-slate-100">
                {{ tag }}
              </span>
@@ -233,19 +230,20 @@ const handleApplyAudit = (doctor) => {
 
           <div class="w-full mt-auto space-y-3">
              <div class="flex justify-center items-center gap-2 text-xs">
-                <el-icon :class="doc.availabilityType === 'success' ? 'text-green-500' : (doc.availabilityType === 'warning' ? 'text-orange-500' : 'text-slate-400')"><Timer /></el-icon>
-                <span :class="doc.availabilityType === 'success' ? 'font-bold text-green-600' : (doc.availabilityType === 'warning' ? 'font-bold text-orange-500' : 'text-slate-500')">
-                  {{ doc.availability }}
+                <el-icon :class="doc.canAudit ? 'text-green-500' : 'text-slate-400'"><Timer /></el-icon>
+                <span :class="doc.canAudit ? 'font-bold text-green-600' : 'text-slate-500'">
+                  {{ doc.availabilityText }}
                 </span>
              </div>
 
              <button 
                 @click="handleApplyAudit(doc)"
+                :disabled="!doc.canAudit"
                 class="w-full py-2.5 rounded-xl text-sm font-bold transition-all duration-300 flex items-center justify-center gap-2"
-                :class="doc.availability === '今日额满' ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-brand-blue text-white hover:bg-blue-600 shadow-md hover:shadow-lg active:scale-95'"
+                :class="!doc.canAudit ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-brand-blue text-white hover:bg-blue-600 shadow-md hover:shadow-lg active:scale-95'"
              >
-                <span>{{ doc.availability === '今日额满' ? '今日额满' : '申请专家审核' }}</span>
-                <el-icon v-if="doc.availability !== '今日额满'"><ArrowRight /></el-icon>
+                <span>{{ doc.canAudit ? '申请专家审核' : '暂不可用' }}</span>
+                <el-icon v-if="doc.canAudit"><ArrowRight /></el-icon>
              </button>
           </div>
 
@@ -253,11 +251,11 @@ const handleApplyAudit = (doctor) => {
       </div>
     </section>
 
-    <div class="flex justify-center mt-12 pb-8">
+    <div class="flex justify-center mt-12 pb-8" v-if="total > 0">
       <el-pagination
         background
         layout="prev, pager, next"
-        :total="filteredDoctors.length"
+        :total="total"
         :page-size="pageSize"
         v-model:current-page="currentPage"
         @current-change="handlePageChange"
@@ -268,7 +266,7 @@ const handleApplyAudit = (doctor) => {
 </template>
 
 <style scoped>
-/* 样式保持不变，复用之前的 Tailwind 风格 */
+/* 样式与之前保持一致 */
 :deep(.search-input-custom .el-input__wrapper),
 :deep(.filter-select-custom .el-input__wrapper) {
   border-radius: 12px;
@@ -278,27 +276,18 @@ const handleApplyAudit = (doctor) => {
   background-color: #f8fafc;
   transition: all 0.3s;
 }
-
 :deep(.search-input-custom .el-input__wrapper:hover),
 :deep(.filter-select-custom .el-input__wrapper:hover) {
     background-color: #fff;
     border-color: #cbd5e1;
 }
-
 :deep(.search-input-custom .el-input__wrapper.is-focus),
 :deep(.filter-select-custom.is-focus .el-input__wrapper) {
   border-color: #3b82f6;
   background-color: #fff;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15) !important;
 }
-
 :deep(.el-pagination.is-background .el-pager li:not(.is-disabled).is-active) {
   background-color: #3b82f6;
 }
-:deep(.el-pagination.is-background .el-pager li) {
-  border-radius: 8px;
-  background-color: #fff;
-  border: 1px solid #e2e8f0;
-}
 </style>
-

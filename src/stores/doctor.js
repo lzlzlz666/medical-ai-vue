@@ -16,11 +16,17 @@ export const useDoctorStore = defineStore('doctor', () => {
     localStorage.setItem('doctor_info', JSON.stringify(doctorInfo.value))
   }
 
+  const updateAvatar = (url) => {
+    doctorInfo.value.avatar = url
+    // 这里的 ...userInfo.value 保证了昵称等其他信息不会丢失
+    localStorage.setItem('doctor_info', JSON.stringify(doctorInfo.value))
+  }
+
   const logout = () => {
       token.value = ''
       localStorage.removeItem('doctor_token')
       localStorage.removeItem('doctor_info')
   }
 
-  return { token, doctorInfo, setToken, setDoctorInfo, logout }
+  return { token, doctorInfo, setToken, setDoctorInfo, updateAvatar, logout }
 })

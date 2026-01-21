@@ -16,6 +16,14 @@ export const useUserStore = defineStore('user', () => {
     localStorage.setItem('user_info', JSON.stringify(userInfo.value))
   }
 
+  // 🔥🔥🔥 新增：专门更新头像的方法 🔥🔥🔥
+  // 这样 Settings.vue 里的 userStore.updateAvatar(url) 就不会报错了
+  const updateAvatar = (url) => {
+    userInfo.value.avatar = url
+    // 这里的 ...userInfo.value 保证了昵称等其他信息不会丢失
+    localStorage.setItem('user_info', JSON.stringify(userInfo.value))
+  }
+
   const logout = () => {
       token.value = ''
       userInfo.value = {}
@@ -24,5 +32,5 @@ export const useUserStore = defineStore('user', () => {
   }
 
   // ... 其他保持不变
-  return { token, userInfo, setToken, setUserInfo, logout }
+  return { token, userInfo, setToken, setUserInfo, updateAvatar, logout }
 })

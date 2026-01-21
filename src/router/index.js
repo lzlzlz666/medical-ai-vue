@@ -87,7 +87,8 @@ const router = createRouter({
           path: 'dashboard',
           name: 'DoctorDashboard',
           component: () => import('@/views/doctor/Dashboard.vue')
-        }
+        },
+        
       ]
     },
 
@@ -104,7 +105,28 @@ const router = createRouter({
           path: 'dashboard',
           name: 'AdminDashboard',
           component: () => import('@/views/admin/Dashboard.vue')
+        },
+        {
+          path: 'users', // ✅ 用户管理
+          name: 'AdminUsers',
+          component: () => import('@/views/admin/Users.vue')
+        },
+        {
+          path: 'depts', // ✅ 科室管理
+          name: 'AdminDepts',
+          component: () => import('@/views/admin/Depts.vue')
+        },
+        {
+          path: 'doctors', // ✅ 医生管理
+          name: 'AdminDoctors',
+          component: () => import('@/views/admin/Doctors.vue')
+        },
+        {
+          path: 'profile', // ✅ 医生管理
+          name: 'AdminProfile',
+          component: () => import('@/views/admin/Settings.vue')
         }
+
       ]
     }
   ]

@@ -1,10 +1,13 @@
 <script setup>
 import { reactive, ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { UserFilled, Lock, Timer, Refresh } from '@element-plus/icons-vue'
+import { UserFilled, Lock, Timer, Refresh, Plus } from '@element-plus/icons-vue'
 import { getAdminProfile, updateAdminProfile, updateAdminPassword } from '@/api/admin'
+// 1. 引入 Pinia Store
+import { useAdminStore } from '@/stores/admin' 
 
 // === 1. 数据定义 ===
+const adminStore = useAdminStore() 
 const loading = ref(false)
 const isSubmitting = ref(false)
 
@@ -13,22 +16,21 @@ const userInfo = reactive({
   id: '',
   username: '',
   nickname: '',
-  status: '已激活 (Active)',
+  status: '',      // 显示的文本
+  statusValue: 1,  // 🔥 新增：用于判断颜色的原始状态值 (1正常, 0禁用)
   avatar: '',
   createTime: '',
   updateTime: ''
 })
 
-// 修改密码表单
 const passwordForm = reactive({
   oldPassword: '',
   newPassword: '',
   confirmPassword: ''
 })
 
-// 上传所需的 Header
 const uploadHeaders = {
-  token: localStorage.getItem('admin_token')
+  token: adminStore.token 
 }
 
 // === 2. 核心逻辑 ===
@@ -38,7 +40,6 @@ const loadProfile = async () => {
   loading.value = true
   try {
     const res = await getAdminProfile()
-    // 假设后端返回的数据结构是 res (或者 res.data，取决于你的 request.js 封装)
     const data = res 
     
     userInfo.id = data.id
@@ -47,8 +48,19 @@ const loadProfile = async () => {
     userInfo.avatar = data.avatar
     userInfo.createTime = data.createTime
     userInfo.updateTime = data.updateTime
-    // 如果后端返回 status 1/0，这里做个转换
-    userInfo.status = data.status === 1 ? '已激活 (Active)' : '已禁用'
+    
+    // 🔥 保存原始状态值，用于控制颜色
+    userInfo.statusValue = data.status
+    // 设置显示文本
+    userInfo.status = data.status === 1 ? '已激活 (Active)' : '已禁用 (Disabled)'
+
+    // 同步到 Store
+    adminStore.setAdminInfo({
+      id: data.id,
+      username: data.username,
+      nickname: data.nickname,
+      avatar: data.avatar
+    })
     
   } catch (error) {
     console.error('获取个人信息失败', error)
@@ -57,47 +69,56 @@ const loadProfile = async () => {
   }
 }
 
-// 🔥 核心修改：头像上传成功后，直接调用更新接口保存到数据库
+// 头像上传成功回调
 const handleAvatarSuccess = async (response) => {
   if (response.code === 1) {
-    // 1. 本地立即回显
     const newAvatarUrl = response.data
+    
+    // 1. 前端回显
     userInfo.avatar = newAvatarUrl
     
-    // 2. 自动调用保存接口
     try {
+      // 2. 调用后端接口保存
       await updateAdminProfile({
-        nickname: userInfo.nickname, // 保持当前的昵称
-        avatar: newAvatarUrl         // 更新为新头像
+        nickname: userInfo.nickname, 
+        avatar: newAvatarUrl
       })
-      ElMessage.success('头像已更新并保存')
       
-      // 可选：重新加载以刷新“最后更新时间”
-      // loadProfile() 
+      // 3. 同步更新 Pinia Store
+      adminStore.updateAvatar(newAvatarUrl)
+      
+      ElMessage.success('头像更新成功')
     } catch (error) {
       console.error(error)
-      ElMessage.warning('头像上传成功，但保存到数据库失败，请手动点击保存')
+      ElMessage.warning('头像上传成功但保存失败')
     }
   } else {
     ElMessage.error(response.msg || '上传失败')
   }
 }
 
-// 保存所有修改（主要用于修改昵称和密码）
+// 保存所有修改
 const handleSaveChanges = async () => {
   isSubmitting.value = true
   try {
-    // 1. 保存基础信息 (昵称、头像)
+    // 1. 保存基础信息
     await updateAdminProfile({
       nickname: userInfo.nickname,
       avatar: userInfo.avatar
     })
 
-    // 2. 如果填写了密码，尝试修改密码
+    // 2. 同步更新 Pinia Store
+    adminStore.setAdminInfo({
+      nickname: userInfo.nickname,
+      avatar: userInfo.avatar
+    })
+
+    // 3. 处理密码修改
+    let passwordChanged = false
     if (passwordForm.oldPassword || passwordForm.newPassword) {
       if (!passwordForm.oldPassword || !passwordForm.newPassword) {
         ElMessage.warning('若要修改密码，请填写完整')
-        isSubmitting.value = false // 记得这里要重置 loading 状态
+        isSubmitting.value = false
         return
       }
       if (passwordForm.newPassword !== passwordForm.confirmPassword) {
@@ -111,18 +132,19 @@ const handleSaveChanges = async () => {
         newPassword: passwordForm.newPassword
       })
       
-      // 清空密码表单
       passwordForm.oldPassword = ''
       passwordForm.newPassword = ''
       passwordForm.confirmPassword = ''
+      passwordChanged = true
+    }
+    
+    if (passwordChanged) {
       ElMessage.success('信息与密码已修改')
     } else {
       ElMessage.success('个人信息更新成功')
     }
     
-    // 重新加载以获取最新 updateTime
-    loadProfile()
-    
+    loadProfile() 
   } catch (error) {
     console.error(error)
   } finally {
@@ -130,7 +152,6 @@ const handleSaveChanges = async () => {
   }
 }
 
-// 初始化
 onMounted(() => {
   loadProfile()
 })
@@ -169,9 +190,14 @@ onMounted(() => {
         <div class="w-full space-y-4">
           <div class="flex justify-between items-center text-sm py-3 border-b border-slate-50">
             <span class="text-slate-500 font-medium">账号状态</span>
-            <span class="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold">
+            
+            <span 
+              class="px-3 py-1 rounded-full text-xs font-bold"
+              :class="userInfo.statusValue === 1 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'"
+            >
               {{ userInfo.status }}
             </span>
+
           </div>
           <div class="flex justify-between items-center text-sm py-2">
             <span class="text-slate-500 font-medium">角色昵称</span>

@@ -16,11 +16,17 @@ export const useAdminStore = defineStore('admin', () => {
     localStorage.setItem('admin_info', JSON.stringify(adminInfo.value))
   }
 
+  const updateAvatar = (url) => {
+    adminInfo.value.avatar = url
+    // 这里的 ...userInfo.value 保证了昵称等其他信息不会丢失
+    localStorage.setItem('admin_info', JSON.stringify(adminInfo.value))
+  }
+
   const logout = () => {
       token.value = ''
       localStorage.removeItem('admin_token')
       localStorage.removeItem('admin_info')
   }
 
-  return { token, adminInfo, setToken, setAdminInfo, logout }
+  return { token, adminInfo, setToken, setAdminInfo, updateAvatar, logout }
 })

@@ -1,4 +1,9 @@
 <script setup>
+  // 1. 引入 Element Plus 的配置组件
+import { ElConfigProvider } from 'element-plus'
+// 2. 引入中文语言包
+import zhCn from 'element-plus/dist/locale/zh-cn.mjs'
+
 import { onMounted } from 'vue'
 // 1. 引入所有角色的 Store
 import { useUserStore } from '@/stores/user'
@@ -62,7 +67,9 @@ onMounted(async () => {
 </script>
 
 <template>
-  <router-view />
+  <el-config-provider :locale="zhCn">
+    <router-view />
+  </el-config-provider>
 </template>
 
 <style>
