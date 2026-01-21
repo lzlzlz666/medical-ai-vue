@@ -1,35 +1,61 @@
 <script setup>
 import { onMounted } from 'vue'
-import { useUserStore } from '@/stores/user' // 引入 Pinia
-import { getUserInfo } from '@/api/user'  // 引入获取信息接口
+// 1. 引入所有角色的 Store
+import { useUserStore } from '@/stores/user'
+import { useAdminStore } from '@/stores/admin'
+import { useDoctorStore } from '@/stores/doctor'
+
+// 2. 引入所有角色的获取信息 API
+import { getUserInfo } from '@/api/user'
+import { getAdminInfo } from '@/api/admin'
+import { getDoctorInfo } from '@/api/doctor'
 
 const userStore = useUserStore()
+const adminStore = useAdminStore()
+const doctorStore = useDoctorStore()
 
 onMounted(async () => {
-  // 1. 检查是否有 token (代表已登录)
-  const token = localStorage.getItem('token')
-  
-  if (token) {
+  // === 1. 同步【普通用户】信息 ===
+  const userToken = localStorage.getItem('user_token')
+  if (userToken) {
     try {
-      // 2. 静默请求最新的用户信息
-      // 注意：request.js 拦截器已经处理了 data.data 的剥离，这里直接拿数据
-      const latestUserData = await getUserInfo()
-      
-      if (latestUserData) {
-        // 3. 将最新的数据（包含最新的 avatar）同步到 Pinia 和 localStorage
-        // 这一步执行完，侧边栏的头像会自动“跳”出来
-        userStore.setUserInfo({
-          id: latestUserData.id,
-          username: latestUserData.username,
-          nickname: latestUserData.nickname,
-          avatar: latestUserData.avatar,
-          // ...其他字段自动合并
-        })
-        console.log('✅ 用户信息已自动同步最新版')
+      const data = await getUserInfo()
+      if (data) {
+        userStore.setUserInfo(data)
+        console.log('✅ 用户信息同步完成')
       }
-    } catch (error) {
-      // 如果 Token 过期了，request.js 会自动跳登录页，这里不用管
-      console.warn('自动同步用户信息失败:', error)
+    } catch (e) {
+      console.warn('用户同步失败(可能Token过期)', e)
+      // 可选：如果报错401，Store里可能需要清理一下，防止页面还显示旧名字
+      userStore.logout() 
+    }
+  }
+
+  // === 2. 同步【管理员】信息 ===
+  const adminToken = localStorage.getItem('admin_token')
+  if (adminToken) {
+    try {
+      const data = await getAdminInfo()
+      if (data) {
+        adminStore.setAdminInfo(data)
+        console.log('✅ 管理员信息同步完成')
+      }
+    } catch (e) {
+      console.warn('管理员同步失败', e)
+    }
+  }
+
+  // === 3. 同步【医生】信息 ===
+  const doctorToken = localStorage.getItem('doctor_token')
+  if (doctorToken) {
+    try {
+      const data = await getDoctorInfo()
+      if (data) {
+        doctorStore.setDoctorInfo(data)
+        console.log('✅ 医生信息同步完成')
+      }
+    } catch (e) {
+      console.warn('医生同步失败', e)
     }
   }
 })

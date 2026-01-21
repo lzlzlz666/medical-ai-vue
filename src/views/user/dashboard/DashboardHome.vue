@@ -47,7 +47,7 @@ const vitals = ref([
 ])
 
 onMounted(() => {
-  const userInfoStr = localStorage.getItem('userInfo')
+  const userInfoStr = localStorage.getItem('user_info')
   if (userInfoStr) {
     const userInfo = JSON.parse(userInfoStr)
     username.value = userInfo.nickname || userInfo.username

@@ -2,9 +2,12 @@
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus' // 引入弹窗组件
 import { logout } from '@/api/user' // 引入刚才写的 api
-import UserSideMenu from './UserSideMenu.vue'
+import { useAdminStore } from '@/stores/admin' // 1. 引入 Store
+
+import AdminSideMenu from './AdminSideMenu.vue'
 
 const router = useRouter()
+const adminStore = useAdminStore() 
 
 // === 退出登录逻辑 ===
 const handleLogout = () => {
@@ -27,8 +30,7 @@ const handleLogout = () => {
       console.warn('后端退出接口调用失败', e)
     } finally {
       // 3. 【核心步骤】清除本地存储的 Token 和用户信息
-      localStorage.removeItem('token')
-      localStorage.removeItem('userInfo')
+      adminStore.logout()
       
       // 4. 提示并跳转回登录页
       ElMessage.success('已安全退出')
@@ -42,7 +44,7 @@ const handleLogout = () => {
 
 <template>
   <div class="flex h-screen bg-[#F8FAFC] overflow-hidden font-sans text-slate-800">
-    <UserSideMenu />
+    <AdminSideMenu />
 
     <main class="flex-1 flex flex-col min-w-0">
       <header class="h-20 flex items-center justify-between px-8 bg-[#F8FAFC] flex-shrink-0">
