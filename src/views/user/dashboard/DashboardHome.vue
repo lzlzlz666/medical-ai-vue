@@ -76,12 +76,18 @@ const fetchHealthData = async (type) => {
 const processChartData = (dataList, type) => {
   const dates = [], systolic = [], diastolic = [], glucose = [], heartRate = []
   const daysCount = type === 'last7Days' ? 7 : 30
-  // 保持时间冻结以便调试 (实际项目可用 dayjs())
-  const today = dayjs('2026-01-20') 
+  
+  // ❌ 之前的错误写法：时间冻结
+  // const today = dayjs('2026-01-20') 
+
+  // ✅ 修正后的写法：使用当前真实时间
+  const today = dayjs() 
 
   for (let i = daysCount - 1; i >= 0; i--) {
+    // 动态生成最近7天的日期字符串
     const dateStr = today.subtract(i, 'day').format('YYYY-MM-DD')
     dates.push(dateStr)
+    
     const record = dataList.find(item => item.recordDate === dateStr)
     if (record) {
       systolic.push(record.systolicBp)
@@ -116,41 +122,63 @@ const analyzeBloodPressure = (sys, dia) => {
 }
 
 const updateTodayVitals = (dataList) => {
-  const todayStr = '2026-01-20' // 调试用日期
+  // 🔥 调试重点：
+  // 如果你数据库里的数据是 "2026-01-20"，但今天是 "2026-01-21"，
+  // 请暂时取消下面第一行的注释，注释掉第二行，否则永远查不到数据。
+  
+  // const todayStr = '2026-01-20' // 🛠️ 调试用：强制指定有数据的日期
+  const todayStr = dayjs().format('YYYY-MM-DD') // 🚀 生产用：获取系统今天日期
+
+  console.log('正在查找日期:', todayStr)
+  
   const todayRecord = dataList.find(item => item.recordDate === todayStr)
 
   if (todayRecord) {
-    // 1. 心率
+    // ===========================
+    // 1. 心率 (Heart Rate) 修复
+    // ===========================
     vitals.value[0].value = todayRecord.heartRate
-    vitals.value[0].measureTime = "07:30" // 晨起时间
-    if(todayRecord.heartRate > 100) {
-        vitals.value[0].status = '心率过快'; vitals.value[0].statusType = 'danger'
-    } else if (todayRecord.heartRate < 60) {
-        vitals.value[0].status = '心率过慢'; vitals.value[0].statusType = 'warning'
+    const hr = parseInt(todayRecord.heartRate) // 强制转数字
+
+    if (hr > 100) {
+        vitals.value[0].status = '心率过快'
+        vitals.value[0].statusType = 'danger'
+    } else if (hr < 60) {
+        vitals.value[0].status = '心率过慢'
+        vitals.value[0].statusType = 'warning'
     } else {
-        vitals.value[0].status = '心率正常'; vitals.value[0].statusType = 'success'
+        // ✅ 核心修复：这里包含了 [60, 100] 的区间
+        vitals.value[0].status = '心率正常'
+        vitals.value[0].statusType = 'success'
     }
 
-    // 2. 血糖 (使用空腹标准)
+    // ===========================
+    // 2. 血糖 (Glucose)
+    // ===========================
     vitals.value[1].value = todayRecord.glucose
-    vitals.value[1].measureTime = "07:30" // 科学时间：早餐前
-    
-    const gluStatus = analyzeGlucoseFasting(todayRecord.glucose)
+    const gluStatus = analyzeGlucoseFasting(todayRecord.glucose) // 调用你上面定义好的函数
     vitals.value[1].status = gluStatus.text
     vitals.value[1].statusType = gluStatus.type
 
-    // 3. 血压
+    // ===========================
+    // 3. 血压 (Blood Pressure)
+    // ===========================
     vitals.value[2].value = `${todayRecord.systolicBp}/${todayRecord.diastolicBp}`
-    vitals.value[2].measureTime = "07:35" // 科学时间：起床后稍作休息
-    
-    const bpStatus = analyzeBloodPressure(todayRecord.systolicBp, todayRecord.diastolicBp)
+    const bpStatus = analyzeBloodPressure(todayRecord.systolicBp, todayRecord.diastolicBp) // 调用你上面定义好的函数
     vitals.value[2].status = bpStatus.text
     vitals.value[2].statusType = bpStatus.type
 
+    // 更新测量时间 (如果有这个字段的话，没有就显示当前时间)
+    const timeStr = dayjs().format('HH:mm')
+    vitals.value.forEach(v => v.measureTime = timeStr)
+
   } else {
-    // 无数据时的默认状态
+    // 没有找到今天的数据 -> 重置为默认
     vitals.value.forEach(v => {
-        v.value = '--'; v.status = '暂无数据'; v.statusType = 'info'; v.measureTime = '--:--'
+        v.value = '--'
+        v.status = '暂无数据'
+        v.statusType = 'info'
+        v.measureTime = '--:--'
     })
     vitals.value[2].value = '--/--'
   }
@@ -183,9 +211,6 @@ const updateTodayVitals = (dataList) => {
             <div class="flex items-baseline gap-1.5">
               <span class="text-4xl font-bold text-slate-800 tracking-tight">{{ item.value }}</span>
               <span class="text-sm text-slate-400 font-medium translate-y-[-2px]">{{ item.unit }}</span>
-            </div>
-            <div class="text-xs text-slate-300 mt-1 font-mono">
-                测量时间: {{ item.measureTime }}
             </div>
           </div>
 
