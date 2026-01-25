@@ -107,6 +107,11 @@ const router = createRouter({
           component: () => import('@/views/admin/Dashboard.vue')
         },
         {
+          path: 'ragManagement',
+          name: 'RagManagement',
+          component: () => import('@/views/admin/RagManagement.vue')
+        },
+        {
           path: 'users', // ✅ 用户管理
           name: 'AdminUsers',
           component: () => import('@/views/admin/Users.vue')

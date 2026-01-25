@@ -1,115 +1,229 @@
 <script setup>
 import { ref, reactive, nextTick, onMounted } from 'vue'
-import { Search, Picture, Microphone, Folder } from '@element-plus/icons-vue' // 需要安装 element-plus 图标
+import { 
+  Search, Picture, Folder, Cpu, Connection, Position, UserFilled, Loading
+} from '@element-plus/icons-vue'
+import { getSessionList, getSessionMessages } from '@/api/consultation'
+import { ElMessage } from 'element-plus'
+import MarkdownIt from 'markdown-it'
+// 🔥 1. 引入 User Store
+import { useUserStore } from '@/stores/user'
 
-// === 1. 左侧咨询列表数据 ===
-const activeSessionId = ref(1) // 当前选中的会话 ID
+const userStore = useUserStore() // 🔥 初始化 store
+
+// === Markdown 配置 ===
+const md = new MarkdownIt({
+  html: true,       
+  linkify: true,    
+  breaks: true      
+})
+
+const renderMarkdown = (text) => {
+  return md.render(text || '')
+}
+
+// === 1. 数据定义 ===
+const activeSessionId = ref(null)
 const searchKeyword = ref('')
-
-const sessionList = reactive([
-  {
-    id: 1,
-    name: 'AI 助手 + 张主任',
-    role: '内分泌科专家团队',
-    avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Doctor1',
-    isAiGroup: true,
-    lastMsg: 'AI: 根据您的CT片子，肺部炎症已基本吸收...',
-    time: '10:30',
-    unread: 0,
-    online: true
-  },
-  {
-    id: 2,
-    name: '李主任 (心内科)',
-    role: '主治医师',
-    avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Doctor2',
-    isAiGroup: false,
-    lastMsg: '您的心率监测报告显示恢复良好，继续保持。',
-    time: '昨天',
-    unread: 2,
-    online: false
-  },
-  {
-    id: 3,
-    name: '营养师 王小美',
-    role: '康复理疗师',
-    avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Nurse1',
-    isAiGroup: false,
-    lastMsg: '关于您的低糖水饮食方案已经更新...',
-    time: '周三',
-    unread: 0,
-    online: true
-  }
-])
-
-// === 2. 右侧聊天记录数据 ===
-const chatHistory = reactive([
-  {
-    id: 1,
-    role: 'ai',
-    name: 'AI 医疗助手',
-    content: '您好，张先生。我分析了您今早上传的连续血糖监测数据。您的空腹血糖值为 7.2 mmol/L，略高于上周平均值。这可能与您昨晚的晚餐摄入有关。正在生成深度分析报告...',
-    time: '上午 10:15',
-    type: 'text',
-    tags: ['生成中...']
-  },
-  {
-    id: 2,
-    role: 'user',
-    name: '我',
-    content: '医生，这是我昨天的CT扫描结果。麻烦看下恢复情况。',
-    time: '上午 10:18',
-    type: 'mixed', // 混合类型：文字+图片
-    images: [
-      'https://plus.unsplash.com/premium_photo-1673984588722-b52973711915?q=80&w=300&auto=format&fit=crop', // 模拟CT图
-      'https://images.unsplash.com/photo-1530497610245-94d3c16cda28?q=80&w=300&auto=format&fit=crop'
-    ]
-  },
-  {
-    id: 3,
-    role: 'doctor',
-    name: '张主任',
-    title: '内分泌科主任',
-    avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Doctor1',
-    content: '看了你的CT片子，肺部的炎症已经基本吸收了。这是一个非常好的信号。继续保持目前的用药剂量，三天后再测一次血压报给我。',
-    time: '上午 10:22',
-    type: 'text',
-    suggestions: ['恢复建议', '炎症吸收']
-  }
-])
-
-// === 3. 输入框逻辑 ===
+const sessionList = ref([])      
+const chatHistory = ref([])      
 const inputContent = ref('')
 const chatContainerRef = ref(null)
+const loading = ref(false)
+const isSending = ref(false) 
 
-const handleSendMessage = () => {
-  if (!inputContent.value.trim()) return
-  
-  // 模拟发送消息
-  chatHistory.push({
+// 功能开关
+const isDeepThinking = ref(true) 
+const isWebSearch = ref(false)   
+
+const currentSession = ref({})
+const userToken = localStorage.getItem('user_token') 
+
+// === 2. 工具函数 ===
+const parseMessageContent = (rawContent) => {
+  if (!rawContent) return { reasoning: '', content: '' }
+  const regex = /<think>([\s\S]*?)<\/think>([\s\S]*)/
+  const match = rawContent.match(regex)
+  if (match) {
+    return { reasoning: match[1].trim(), content: match[2].trim() }
+  } else {
+    return { reasoning: '', content: rawContent }
+  }
+}
+
+// === 3. 加载会话列表 ===
+const loadSessions = async () => {
+  try {
+    const res = await getSessionList()
+    sessionList.value = res.map(item => ({
+      id: item.id,
+      name: item.doctorName ? `${item.doctorName} (${item.deptName || '专家'})` : 'AI 智能问诊助手',
+      role: item.title || '智能初诊',
+      avatar: item.doctorAvatar || 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png',
+      lastMsg: item.aiSummary || '点击查看详情...', 
+      time: formatTime(item.createTime),
+      status: item.status, 
+      online: item.status === 1
+    }))
+    if (sessionList.value.length > 0 && !activeSessionId.value) {
+      handleSelectSession(sessionList.value[0])
+    }
+  } catch (error) {
+    console.error('加载会话列表失败', error)
+  }
+}
+
+// === 4. 加载聊天记录 ===
+const loadMessages = async (sessionId) => {
+  loading.value = true
+  chatHistory.value = [] 
+  try {
+    const res = await getSessionMessages(sessionId)
+    chatHistory.value = res.map(msg => {
+      let role = 'user'
+      let name = '我'
+      // 🔥 2. 从 Store 获取当前用户头像 (如果有的话，没有则用默认图)
+      let avatar = userStore.userInfo.avatar || 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'
+      
+      if (msg.senderType === 'AI') {
+        role = 'ai'
+        name = 'AI 医疗助手'
+      } else if (msg.senderType === 'DOCTOR') {
+        role = 'doctor'
+        name = currentSession.value.name 
+        avatar = currentSession.value.avatar
+      }
+      
+      const parsed = parseMessageContent(msg.content)
+      return {
+        id: msg.id,
+        role: role,
+        name: name,
+        avatar: avatar,
+        content: parsed.content,     
+        reasoning: parsed.reasoning, 
+        time: formatTime(msg.createTime),
+        type: msg.msgType === 2 ? 'image' : 'text', 
+        imageUrl: msg.msgType === 2 ? msg.content : ''
+      }
+    })
+    scrollToBottom()
+  } catch (error) {
+    console.error('加载消息失败', error)
+  } finally {
+    loading.value = false
+  }
+}
+
+// === 5. 交互逻辑 ===
+const handleSelectSession = (session) => {
+  if (isSending.value) return ElMessage.warning('请等待当前对话结束')
+  activeSessionId.value = session.id
+  currentSession.value = session 
+  loadMessages(session.id)
+}
+
+// === 6. 发送消息 & 流式接收 ===
+const handleSendMessage = async () => {
+  const text = inputContent.value.trim()
+  if (!text) return
+  if (isSending.value) return
+
+  // 🔥 3. 发送消息时，也从 Store 获取最新头像
+  const currentUserAvatar = userStore.userInfo.avatar || 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'
+
+  // 用户消息上屏
+  chatHistory.value.push({
     id: Date.now(),
     role: 'user',
     name: '我',
-    content: inputContent.value,
-    time: '刚刚',
+    avatar: currentUserAvatar, // 🔥 使用 Store 中的头像
+    content: text,
+    time: formatTime(new Date()),
     type: 'text'
   })
-  
+
+  // AI 占位消息
+  const aiMsgId = Date.now() + 1
+  chatHistory.value.push({
+    id: aiMsgId,
+    role: 'ai',
+    name: 'AI 医疗助手',
+    avatar: '', 
+    content: '',
+    reasoning: '', 
+    time: formatTime(new Date()),
+    type: 'text',
+    isThinking: true 
+  })
+
+  const currentAiMsg = chatHistory.value[chatHistory.value.length - 1]
+
   inputContent.value = ''
   scrollToBottom()
-  
-  // 模拟 AI 回复
-  setTimeout(() => {
-    chatHistory.push({
-      id: Date.now() + 1,
-      role: 'ai',
-      name: 'AI 医疗助手',
-      content: '收到您的反馈，正在同步给张主任...',
-      time: '刚刚',
-      type: 'text'
+  isSending.value = true
+
+  try {
+    const url = `/api/user/ai/stream?message=${encodeURIComponent(text)}&chatId=${activeSessionId.value}`
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Authentication': userToken || '', 
+        'Accept': 'text/event-stream'
+      }
     })
-    scrollToBottom()
-  }, 1000)
+
+    if (!response.ok) throw new Error(response.statusText)
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    
+    let buffer = '' 
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      const chunk = decoder.decode(value, { stream: true })
+      buffer += chunk 
+
+      const lines = buffer.split('\n')
+      buffer = lines.pop() 
+
+      for (const line of lines) {
+        const trimmedLine = line.trim()
+        if (!trimmedLine.startsWith('data:')) continue
+
+        const jsonStr = trimmedLine.slice(5).trim()
+        if (!jsonStr) continue
+
+        try {
+          const data = JSON.parse(jsonStr)
+          
+          if (data.thinking) {
+            currentAiMsg.reasoning += data.thinking
+          }
+          if (data.answer) {
+            currentAiMsg.content += data.answer
+          }
+          
+          await new Promise(resolve => setTimeout(resolve, 10))
+          scrollToBottom()
+          
+        } catch (e) {
+          console.warn('JSON解析忽略:', e)
+        }
+      }
+    }
+
+  } catch (error) {
+    console.error('流式请求失败', error)
+    currentAiMsg.content += '\n[网络错误，请重试]'
+  } finally {
+    currentAiMsg.isThinking = false
+    isSending.value = false
+  }
 }
 
 const scrollToBottom = () => {
@@ -120,143 +234,154 @@ const scrollToBottom = () => {
   })
 }
 
-// 切换会话
-const handleSelectSession = (id) => {
-  activeSessionId.value = id
-  // 这里可以加逻辑去加载对应的聊天记录
+const formatTime = (timeStr) => {
+  if (!timeStr) return ''
+  const date = new Date(timeStr)
+  return `${date.getHours()}:${date.getMinutes().toString().padStart(2, '0')}`
 }
 
 onMounted(() => {
-  scrollToBottom()
+  loadSessions()
 })
 </script>
 
 <template>
-  <div class="flex h-[calc(100vh-140px)] bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-    
-    <div class="w-80 border-r border-slate-100 flex flex-col bg-slate-50/30">
-      <div class="p-5">
-        <h2 class="font-bold text-lg text-slate-800 mb-4">咨询历史</h2>
-        <div class="relative">
+  <div class="flex h-[calc(100vh-100px)] bg-slate-100 rounded-3xl shadow-xl overflow-hidden border border-slate-200/60 font-sans">
+  
+    <div class="w-80 border-r border-slate-200 flex flex-col bg-white z-10">
+      <div class="p-6 pb-4">
+        <h2 class="font-bold text-xl text-slate-800 mb-5 tracking-tight">医疗咨询</h2>
+        <div class="relative group">
            <el-input 
              v-model="searchKeyword" 
-             placeholder="搜索咨询记录..." 
+             placeholder="搜索历史记录..." 
              class="!w-full custom-search"
            >
              <template #prefix>
-               <el-icon class="text-slate-400"><Search /></el-icon>
+               <el-icon class="text-slate-400 group-hover:text-blue-500 transition-colors"><Search /></el-icon>
              </template>
            </el-input>
         </div>
       </div>
 
-      <div class="flex-1 overflow-y-auto custom-scrollbar">
+      <div class="flex-1 overflow-y-auto custom-scrollbar px-3 pb-4 space-y-1">
         <div 
           v-for="session in sessionList" 
           :key="session.id"
-          @click="handleSelectSession(session.id)"
+          @click="handleSelectSession(session)"
           :class="[
-            'px-5 py-4 cursor-pointer transition-colors border-l-4 hover:bg-white',
-            activeSessionId === session.id ? 'bg-white border-brand-blue shadow-sm' : 'border-transparent'
+            'px-4 py-3 cursor-pointer transition-all duration-200 rounded-xl mb-1 border',
+            activeSessionId === session.id 
+              ? 'bg-blue-50/80 border-blue-100 shadow-sm' 
+              : 'bg-transparent border-transparent hover:bg-slate-50'
           ]"
         >
-          <div class="flex gap-3">
-            <div class="relative">
-              <img :src="session.avatar" class="w-11 h-11 rounded-xl bg-white border border-slate-100 p-0.5" />
-              <span v-if="session.online" class="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></span>
+          <div class="flex gap-3.5 items-center">
+            <div class="relative flex-shrink-0">
+              <img :src="session.avatar" class="w-12 h-12 rounded-full bg-slate-100 object-cover border border-slate-100" />
+              <span v-if="session.online" class="absolute bottom-0.5 right-0.5 w-3 h-3 bg-emerald-500 border-2 border-white rounded-full"></span>
             </div>
             <div class="flex-1 min-w-0">
-              <div class="flex justify-between items-start mb-0.5">
-                <span class="font-bold text-slate-800 text-sm truncate">{{ session.name }}</span>
-                <span class="text-[10px] text-slate-400">{{ session.time }}</span>
+              <div class="flex justify-between items-center mb-1">
+                <span class="font-bold text-slate-800 text-sm truncate" :class="activeSessionId === session.id ? 'text-blue-700' : ''">{{ session.name }}</span>
+                <span class="text-[10px] text-slate-400 font-medium">{{ session.time }}</span>
               </div>
-              <p class="text-xs text-slate-500 truncate">{{ session.lastMsg }}</p>
+              <p class="text-xs truncate" :class="activeSessionId === session.id ? 'text-blue-600/70' : 'text-slate-500'">{{ session.lastMsg }}</p>
             </div>
           </div>
         </div>
       </div>
     </div>
 
-    <div class="flex-1 flex flex-col bg-[#F9FAFB]">
+    <div class="flex-1 flex flex-col bg-slate-100 relative">
       
-      <div class="h-16 bg-white border-b border-slate-100 px-6 flex items-center justify-between flex-shrink-0">
-        <div class="flex items-center gap-3">
-          <div class="relative">
-             <div class="w-10 h-10 rounded-full bg-gradient-to-tr from-brand-blue to-cyan-500 flex items-center justify-center text-white font-bold">
-                <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
-             </div>
-             <span class="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></span>
-          </div>
-          <div>
-            <div class="flex items-center gap-2">
-              <h3 class="font-bold text-slate-800">AI 助手 + 张主任 (内分泌科)</h3>
-              <span class="px-2 py-0.5 bg-green-50 text-green-600 text-[10px] font-bold rounded border border-green-100">已认证专家</span>
-            </div>
-            <div class="text-xs text-slate-400">当前处于联合诊治模式</div>
-          </div>
-        </div>
-        <div class="flex gap-4 text-slate-400">
-           <button class="hover:text-brand-blue"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg></button>
-           <button class="hover:text-brand-blue"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"/></svg></button>
+      <div class="h-16 bg-white/80 backdrop-blur-md border-b border-slate-200/80 px-8 flex items-center justify-between flex-shrink-0 z-10 sticky top-0">
+        <div class="flex items-center gap-4">
+           <h3 class="font-bold text-slate-800 text-lg">{{ currentSession.name || 'AI 智能诊室' }}</h3>
+           <span v-if="currentSession.role" class="px-2.5 py-0.5 bg-blue-100 text-blue-700 text-[11px] font-bold rounded-full border border-blue-200/50">{{ currentSession.role }}</span>
         </div>
       </div>
 
-      <div ref="chatContainerRef" class="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
-        <div class="flex justify-center">
-          <span class="bg-slate-200 text-slate-500 text-xs px-3 py-1 rounded-full">上午 10:15</span>
-        </div>
-
-        <div v-for="msg in chatHistory" :key="msg.id" class="w-full">
+      <div ref="chatContainerRef" class="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar scroll-smooth">
+        <div v-for="msg in chatHistory" :key="msg.id" class="w-full animate-fade-in-up">
           
-          <div v-if="msg.role === 'ai'" class="flex gap-4 max-w-[85%]">
-             <div class="w-10 h-10 rounded-full bg-brand-blue flex-shrink-0 flex items-center justify-center text-white shadow-md">
-                <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+          <div v-if="msg.role === 'ai'" class="flex gap-4 max-w-[95%]">
+             <div class="w-10 h-10 rounded-full bg-gradient-to-b from-blue-500 to-blue-700 flex-shrink-0 flex items-center justify-center text-white shadow-lg shadow-blue-200 mt-1 ring-2 ring-white">
+                <el-icon :size="20"><Cpu /></el-icon>
              </div>
-             <div class="flex-1">
-                <div class="flex items-center gap-2 mb-1">
-                   <span class="text-sm font-bold text-brand-blue">AI 医疗助手</span>
-                   <span class="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded border border-blue-100">PRO</span>
+             
+             <div class="flex-1 min-w-0 space-y-4">
+                <div class="flex items-center gap-2">
+                   <span class="text-xs font-bold text-slate-500">AI 医疗助手</span>
+                   <span v-if="msg.isThinking && !msg.content" class="flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-100 border border-violet-200">
+                      <el-icon class="is-loading text-violet-600" :size="12"><Loading /></el-icon>
+                      <span class="text-[10px] text-violet-600 font-bold">R1 深度推理中...</span>
+                   </span>
                 </div>
-                <div class="bg-white p-4 rounded-2xl rounded-tl-none shadow-sm border border-slate-100 text-slate-700 text-sm leading-relaxed">
-                   {{ msg.content }}
-                   <div v-if="msg.tags" class="mt-2 text-xs text-slate-400 italic">{{ msg.tags[0] }}</div>
+                
+                <div v-if="msg.reasoning" class="relative group">
+                   <el-collapse :model-value="['1']" class="!border-none">
+                      <el-collapse-item name="1">
+                        <template #title>
+                          <div class="flex items-center gap-2 text-xs font-bold select-none px-3 py-1 rounded-lg transition-colors hover:bg-slate-200/50 cursor-pointer w-full">
+                            <div class="flex items-center justify-center w-5 h-5 rounded bg-violet-100 text-violet-600">
+                                <el-icon><Connection /></el-icon>
+                            </div>
+                            <span class="text-slate-600">深度思考链路 (Chain of Thought)</span>
+                            <span class="text-[10px] text-slate-400 font-normal ml-auto">已生成 {{ msg.reasoning.length }} 字</span>
+                          </div>
+                        </template>
+                        
+                        <div class="mt-2 mx-1 relative overflow-hidden rounded-r-lg border-l-4 border-violet-400 bg-white shadow-sm ring-1 ring-slate-900/5">
+                          <div class="p-4 text-xs text-slate-600 font-mono leading-relaxed whitespace-pre-wrap bg-slate-50/50">
+                            {{ msg.reasoning }}
+                            <span v-if="msg.isThinking && !msg.content" class="inline-block w-2 h-4 bg-violet-400 animate-pulse align-middle ml-1"></span>
+                          </div>
+                        </div>
+                      </el-collapse-item>
+                   </el-collapse>
                 </div>
+
+                <div 
+                  v-if="msg.content" 
+                  class="bg-white p-5 rounded-2xl rounded-tl-none shadow-md shadow-slate-200/50 border border-slate-100 text-slate-700 text-[15px] leading-7 tracking-wide relative z-10"
+                >
+                   <div class="markdown-body" v-html="renderMarkdown(msg.content)"></div>
+                   <span v-if="msg.isThinking" class="inline-block w-2 h-4 bg-blue-500 animate-pulse align-middle ml-1 rounded-sm"></span>
+                </div>
+
+                <div v-if="!msg.reasoning && !msg.content && msg.isThinking" class="bg-white px-5 py-4 rounded-2xl rounded-tl-none shadow-sm border border-slate-100 w-fit">
+                   <div class="flex items-center gap-2 text-slate-400 text-sm">
+                      <span class="relative flex h-3 w-3">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span>
+                      </span>
+                      正在整理医疗建议...
+                   </div>
+                </div>
+
              </div>
           </div>
 
           <div v-if="msg.role === 'user'" class="flex flex-row-reverse gap-4 max-w-[85%] ml-auto">
-             <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=Felix" class="w-10 h-10 rounded-full bg-orange-100 flex-shrink-0" />
-             <div class="flex flex-col items-end">
-                <div class="text-xs text-slate-400 mb-1 mr-1">张先生</div>
-                <div class="bg-brand-blue p-4 rounded-2xl rounded-tr-none shadow-lg shadow-blue-200 text-white text-sm leading-relaxed">
-                   {{ msg.content }}
-                   <div v-if="msg.images" class="flex gap-2 mt-3">
-                      <img v-for="(img, idx) in msg.images" :key="idx" :src="img" class="w-24 h-24 object-cover rounded-lg border-2 border-white/20 hover:border-white cursor-pointer transition-colors" />
-                   </div>
+             <img :src="msg.avatar" class="w-10 h-10 rounded-full bg-slate-200 border-2 border-white shadow-sm flex-shrink-0 object-cover" />
+             <div class="flex flex-col items-end gap-1">
+                <div class="bg-gradient-to-br from-blue-500 to-blue-600 p-4 rounded-2xl rounded-tr-none shadow-md shadow-blue-100 text-white text-[15px] leading-relaxed whitespace-pre-wrap">
+                   <span v-if="msg.type === 'text'">{{ msg.content }}</span>
+                   <img v-else :src="msg.imageUrl" class="max-w-[200px] rounded-lg border-2 border-white/20" />
                 </div>
+                <span class="text-[10px] text-slate-400 font-medium pr-1">{{ msg.time }}</span>
              </div>
           </div>
 
           <div v-if="msg.role === 'doctor'" class="flex gap-4 max-w-[85%]">
-             <div class="relative flex-shrink-0">
-                <img :src="msg.avatar" class="w-10 h-10 rounded-full border border-slate-100" />
-                <span class="absolute -bottom-1 -right-1 bg-green-500 rounded-full p-0.5 border-2 border-white">
-                   <svg class="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="4" d="M5 13l4 4L19 7"/></svg>
-                </span>
-             </div>
+             <img :src="msg.avatar" class="w-10 h-10 rounded-full border border-slate-100 shadow-sm" />
              <div class="flex-1">
                 <div class="flex items-center gap-2 mb-1">
                    <span class="text-sm font-bold text-slate-800">{{ msg.name }}</span>
-                   <span class="w-1 h-1 rounded-full bg-slate-300"></span>
-                   <span class="text-xs text-slate-500">{{ msg.title }}</span>
                 </div>
-                <div class="bg-white p-4 rounded-2xl rounded-tl-none shadow-sm border border-slate-100 text-slate-700 text-sm leading-relaxed">
+                <div class="bg-white p-4 rounded-2xl rounded-tl-none shadow-sm text-slate-700 text-sm leading-relaxed border border-slate-100">
                    {{ msg.content }}
-                   <div v-if="msg.suggestions" class="flex gap-2 mt-3">
-                      <span v-for="tag in msg.suggestions" :key="tag" class="px-2 py-1 bg-slate-100 text-slate-500 text-xs rounded hover:bg-slate-200 cursor-pointer">
-                        # {{ tag }}
-                      </span>
-                   </div>
                 </div>
              </div>
           </div>
@@ -264,41 +389,45 @@ onMounted(() => {
         </div>
       </div>
 
-      <div class="bg-white border-t border-slate-100 p-5">
-         <div class="bg-slate-50 border border-slate-200 rounded-2xl p-2 focus-within:ring-2 focus-within:ring-brand-blue/20 focus-within:border-brand-blue transition-all">
+      <div class="p-6 pt-2">
+         <div class="bg-white rounded-3xl shadow-lg shadow-slate-200/50 border border-slate-100 transition-all duration-300 focus-within:shadow-xl focus-within:border-blue-100 overflow-hidden relative">
             <textarea 
               v-model="inputContent"
-              class="w-full bg-transparent border-none outline-none text-sm text-slate-700 px-3 py-2 resize-none h-20 scrollbar-hide"
-              placeholder="描述您的症状、用药情况或上传新的医学报告..."
+              class="w-full bg-transparent border-none outline-none text-[15px] text-slate-700 px-6 py-4 resize-none h-28 scrollbar-hide placeholder-slate-400/80 leading-relaxed"
+              placeholder="请描述您的症状、既往病史，或上传检查报告..."
               @keydown.enter.prevent="handleSendMessage"
+              :disabled="isSending"
             ></textarea>
             
-            <div class="flex items-center justify-between px-2 pt-2">
-               <div class="flex gap-2">
-                  <button class="p-2 text-slate-400 hover:text-brand-blue hover:bg-blue-50 rounded-lg transition-colors">
-                     <el-icon :size="18"><Picture /></el-icon>
-                  </button>
-                  <button class="p-2 text-slate-400 hover:text-brand-blue hover:bg-blue-50 rounded-lg transition-colors">
-                     <el-icon :size="18"><Folder /></el-icon>
-                  </button>
-                  <button class="p-2 text-slate-400 hover:text-brand-blue hover:bg-blue-50 rounded-lg transition-colors">
-                     <el-icon :size="18"><Microphone /></el-icon>
-                  </button>
-                  <button class="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-600 text-xs font-bold rounded-lg hover:bg-indigo-100 transition-colors">
-                     <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                     AI 深度分析
+            <div class="flex items-center justify-between px-4 pb-3 pt-2 bg-white">
+               <div class="flex items-center gap-4">
+                  <div class="flex gap-1 pr-4 border-r border-slate-100">
+                     <el-tooltip content="上传图片" placement="top">
+                        <button class="p-2 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all"><el-icon :size="20"><Picture /></el-icon></button>
+                     </el-tooltip>
+                     <el-tooltip content="上传文件" placement="top">
+                        <button class="p-2 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all"><el-icon :size="20"><Folder /></el-icon></button>
+                     </el-tooltip>
+                  </div>
+                  <button @click="isDeepThinking = !isDeepThinking" 
+                    class="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200 border select-none" 
+                    :class="isDeepThinking ? 'bg-indigo-50 text-indigo-600 border-indigo-200' : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'">
+                    <el-icon :class="isDeepThinking ? 'animate-pulse' : ''"><Cpu /></el-icon>
+                    <span>深度思考 R1</span>
                   </button>
                </div>
                
-               <button @click="handleSendMessage" class="bg-brand-blue text-white px-6 py-2 rounded-xl text-sm font-bold shadow-lg shadow-blue-200 hover:bg-blue-600 active:scale-95 transition-all flex items-center gap-2">
-                  发送 
-                  <svg class="w-4 h-4 transform rotate-90" fill="currentColor" viewBox="0 0 20 20"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z"/></svg>
+               <button 
+                  @click="handleSendMessage" 
+                  :disabled="!inputContent.trim() || isSending" 
+                  class="bg-blue-600 text-white w-10 h-10 rounded-xl shadow-lg shadow-blue-200 hover:bg-blue-700 hover:shadow-blue-300 active:scale-95 transition-all flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
+               >
+                  <el-icon :size="18" v-if="!isSending"><Position /></el-icon>
+                  <el-icon :size="18" v-else class="is-loading"><Loading /></el-icon>
                </button>
             </div>
          </div>
-         <div class="text-center mt-3">
-            <span class="text-[10px] text-slate-400">支持格式: JPG, PNG, PDF (最大 20MB) &nbsp;•&nbsp; 隐私保护: 医疗级加密传输</span>
-         </div>
+         <div class="text-center mt-3"><span class="text-[11px] text-slate-400 font-medium">AI 生成内容仅供参考，不作为最终医疗诊断依据</span></div>
       </div>
 
     </div>
@@ -306,17 +435,104 @@ onMounted(() => {
 </template>
 
 <style scoped>
-/* 滚动条美化 */
-.custom-scrollbar::-webkit-scrollbar { width: 4px; }
-.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-.custom-scrollbar::-webkit-scrollbar-thumb { background: #E2E8F0; border-radius: 4px; }
-.custom-scrollbar:hover::-webkit-scrollbar-thumb { background: #CBD5E1; }
+/* 动画 */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-up {
+  animation: fadeInUp 0.3s ease-out forwards;
+}
 
-/* 覆盖 Element UI 输入框样式 */
+/* 滚动条 */
+.custom-scrollbar::-webkit-scrollbar { width: 5px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+.custom-scrollbar:hover::-webkit-scrollbar-thumb { background: #94a3b8; }
+
+/* Element Input */
 :deep(.custom-search .el-input__wrapper) {
-  @apply rounded-xl bg-slate-100 shadow-none border-transparent py-1;
+  @apply rounded-xl bg-slate-50 shadow-none border border-transparent py-1.5 px-3 transition-all;
 }
 :deep(.custom-search .el-input__wrapper.is-focus) {
-  @apply bg-white border-brand-blue ring-2 ring-brand-blue/10;
+  @apply bg-white border-blue-200 ring-4 ring-blue-50/50;
+}
+
+/* Collapse 去边框 */
+:deep(.el-collapse) { border: none; }
+:deep(.el-collapse-item__header) { border: none; background: transparent; height: 32px; }
+:deep(.el-collapse-item__wrap) { border: none; background: transparent; }
+:deep(.el-collapse-item__content) { padding-bottom: 0; }
+
+/* =========================================
+   Markdown 样式美化 (医疗专业风格) 
+   ========================================= */
+.markdown-body {
+  font-size: 15px;
+  line-height: 1.75;
+  color: #334155; 
+}
+
+/* 标题 */
+.markdown-body :deep(h1), 
+.markdown-body :deep(h2), 
+.markdown-body :deep(h3) {
+  font-weight: 700;
+  color: #1e293b; 
+  margin-top: 1.2em;
+  margin-bottom: 0.6em;
+  line-height: 1.3;
+}
+.markdown-body :deep(h1), 
+.markdown-body :deep(h2) {
+  font-size: 17px;
+  position: relative;
+  padding-left: 12px;
+}
+.markdown-body :deep(h1)::before, 
+.markdown-body :deep(h2)::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 4px; bottom: 4px;
+  width: 4px; background: #3b82f6;
+  border-radius: 2px;
+}
+
+/* 列表 */
+.markdown-body :deep(ul), 
+.markdown-body :deep(ol) {
+  margin-bottom: 1em; padding-left: 1.5em;
+}
+.markdown-body :deep(li) {
+  margin-bottom: 0.4em; position: relative;
+}
+.markdown-body :deep(ul) { list-style: none; }
+.markdown-body :deep(ul li)::before {
+  content: '•'; color: #3b82f6;
+  position: absolute; left: -1em; font-weight: bold;
+}
+
+/* 代码 */
+.markdown-body :deep(code) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  background-color: #f1f5f9; color: #0f172a;
+  padding: 0.2em 0.4em; border-radius: 4px; font-size: 85%;
+}
+
+/* 引用块 */
+.markdown-body :deep(blockquote) {
+  border-left: 4px solid #3b82f6;
+  background: #eff6ff; color: #334155;
+  padding: 12px 16px; border-radius: 0 8px 8px 0;
+  margin: 1.5em 0; font-style: normal;
+}
+
+/* 链接 */
+.markdown-body :deep(a) {
+  color: #2563eb; text-decoration: none;
+  border-bottom: 1px dashed #2563eb; transition: all 0.2s;
+}
+.markdown-body :deep(a):hover {
+  background: #eff6ff; border-bottom-style: solid;
 }
 </style>
