@@ -83,11 +83,10 @@ export function uploadFile(formData) {
   })
 }
 
-// 3. (保留) 申请审核逻辑
-// export function applyAudit(data) {
-//   return request({
-//     url: '/user/consultation/audit', // 假设的后端接口
-//     method: 'post',
-//     data
-//   })
-// }
+//申请专家审核
+export function applyDoctorAudit(doctorId) {
+  return request({
+    url: `/user/doctor/apply/${doctorId}`,
+    method: 'post'
+  })
+}

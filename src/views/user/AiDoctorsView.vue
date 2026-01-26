@@ -1,15 +1,14 @@
 <script setup>
 import { ref, reactive, nextTick, onMounted } from 'vue'
 import { 
-  Search, Picture, Folder, Cpu, Connection, Position, UserFilled, Loading
+  Search, Picture, Folder, Cpu, Connection, Position, Loading, Collection 
 } from '@element-plus/icons-vue'
 import { getSessionList, getSessionMessages } from '@/api/consultation'
 import { ElMessage } from 'element-plus'
 import MarkdownIt from 'markdown-it'
-// 🔥 1. 引入 User Store
 import { useUserStore } from '@/stores/user'
 
-const userStore = useUserStore() // 🔥 初始化 store
+const userStore = useUserStore() 
 
 // === Markdown 配置 ===
 const md = new MarkdownIt({
@@ -32,14 +31,13 @@ const chatContainerRef = ref(null)
 const loading = ref(false)
 const isSending = ref(false) 
 
-// 功能开关
-const isDeepThinking = ref(true) 
-const isWebSearch = ref(false)   
+// 🔥 功能开关
+const isDeepThinking = ref(true) // 深度思考：用户可切换
 
 const currentSession = ref({})
 const userToken = localStorage.getItem('user_token') 
 
-// === 2. 工具函数 ===
+// === 2. 工具函数 (解析 <think> 标签) ===
 const parseMessageContent = (rawContent) => {
   if (!rawContent) return { reasoning: '', content: '' }
   const regex = /<think>([\s\S]*?)<\/think>([\s\S]*)/
@@ -82,7 +80,6 @@ const loadMessages = async (sessionId) => {
     chatHistory.value = res.map(msg => {
       let role = 'user'
       let name = '我'
-      // 🔥 2. 从 Store 获取当前用户头像 (如果有的话，没有则用默认图)
       let avatar = userStore.userInfo.avatar || 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'
       
       if (msg.senderType === 'AI') {
@@ -123,13 +120,12 @@ const handleSelectSession = (session) => {
   loadMessages(session.id)
 }
 
-// === 6. 发送消息 & 流式接收 ===
+// === 6. 发送消息 & 流式接收 (核心修改部分) ===
 const handleSendMessage = async () => {
   const text = inputContent.value.trim()
   if (!text) return
   if (isSending.value) return
 
-  // 🔥 3. 发送消息时，也从 Store 获取最新头像
   const currentUserAvatar = userStore.userInfo.avatar || 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'
 
   // 用户消息上屏
@@ -137,7 +133,7 @@ const handleSendMessage = async () => {
     id: Date.now(),
     role: 'user',
     name: '我',
-    avatar: currentUserAvatar, // 🔥 使用 Store 中的头像
+    avatar: currentUserAvatar, 
     content: text,
     time: formatTime(new Date()),
     type: 'text'
@@ -164,14 +160,25 @@ const handleSendMessage = async () => {
   isSending.value = true
 
   try {
-    const url = `/api/user/ai/stream?message=${encodeURIComponent(text)}&chatId=${activeSessionId.value}`
+    const url = `/api/user/ai/stream`
     
+    // 🔥🔥🔥 核心修改：构造 JSON Payload 🔥🔥🔥
+    const payload = {
+        message: text,
+        chatId: activeSessionId.value, // 后端若需要字符串，可加 String()，若支持数字则直接传
+        enableDeepThinking: isDeepThinking.value,
+        enableRAG: true // 强制开启
+    }
+
+    // 🔥🔥🔥 核心修改：POST 请求 + JSON Body 🔥🔥🔥
     const response = await fetch(url, {
-      method: 'GET',
+      method: 'POST',
       headers: {
         'Authentication': userToken || '', 
+        'Content-Type': 'application/json', // 必须指定 JSON 类型
         'Accept': 'text/event-stream'
-      }
+      },
+      body: JSON.stringify(payload)
     })
 
     if (!response.ok) throw new Error(response.statusText)
@@ -325,7 +332,7 @@ onMounted(() => {
                         <template #title>
                           <div class="flex items-center gap-2 text-xs font-bold select-none px-3 py-1 rounded-lg transition-colors hover:bg-slate-200/50 cursor-pointer w-full">
                             <div class="flex items-center justify-center w-5 h-5 rounded bg-violet-100 text-violet-600">
-                                <el-icon><Connection /></el-icon>
+                                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
                             </div>
                             <span class="text-slate-600">深度思考链路 (Chain of Thought)</span>
                             <span class="text-[10px] text-slate-400 font-normal ml-auto">已生成 {{ msg.reasoning.length }} 字</span>
@@ -393,7 +400,7 @@ onMounted(() => {
          <div class="bg-white rounded-3xl shadow-lg shadow-slate-200/50 border border-slate-100 transition-all duration-300 focus-within:shadow-xl focus-within:border-blue-100 overflow-hidden relative">
             <textarea 
               v-model="inputContent"
-              class="w-full bg-transparent border-none outline-none text-[15px] text-slate-700 px-6 py-4 resize-none h-28 scrollbar-hide placeholder-slate-400/80 leading-relaxed"
+              class="w-full bg-transparent border-none outline-none text-[15px] text-slate-700 px-4 py-3 resize-none h-14 min-h-[56px] max-h-32 custom-scrollbar placeholder-slate-400"
               placeholder="请描述您的症状、既往病史，或上传检查报告..."
               @keydown.enter.prevent="handleSendMessage"
               :disabled="isSending"
@@ -409,12 +416,21 @@ onMounted(() => {
                         <button class="p-2 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all"><el-icon :size="20"><Folder /></el-icon></button>
                      </el-tooltip>
                   </div>
-                  <button @click="isDeepThinking = !isDeepThinking" 
-                    class="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200 border select-none" 
-                    :class="isDeepThinking ? 'bg-indigo-50 text-indigo-600 border-indigo-200' : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'">
-                    <el-icon :class="isDeepThinking ? 'animate-pulse' : ''"><Cpu /></el-icon>
-                    <span>深度思考 R1</span>
-                  </button>
+
+                  <div class="flex gap-2">
+                    <button @click="isDeepThinking = !isDeepThinking" 
+                      class="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200 border select-none" 
+                      :class="isDeepThinking ? 'bg-indigo-50 text-indigo-600 border-indigo-200' : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'">
+                      <el-icon :class="isDeepThinking ? 'animate-pulse' : ''"><Cpu /></el-icon>
+                      <span>深度思考 R1</span>
+                    </button>
+
+                    <div class="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold border bg-orange-50 text-orange-600 border-orange-200 select-none cursor-default opacity-80" title="知识库增强模式已强制启用">
+                      <el-icon><Collection /></el-icon>
+                      <span>知识库 RAG (已启用)</span>
+                    </div>
+                  </div>
+
                </div>
                
                <button 
@@ -427,7 +443,7 @@ onMounted(() => {
                </button>
             </div>
          </div>
-         <div class="text-center mt-3"><span class="text-[11px] text-slate-400 font-medium">AI 生成内容仅供参考，不作为最终医疗诊断依据</span></div>
+         <div class="text-center mt-1"><span class="text-[11px] text-slate-400 font-medium">AI 生成内容仅供参考，不作为最终医疗诊断依据</span></div>
       </div>
 
     </div>
@@ -435,7 +451,7 @@ onMounted(() => {
 </template>
 
 <style scoped>
-/* 动画 */
+/* (样式代码保持不变) */
 @keyframes fadeInUp {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
@@ -464,16 +480,12 @@ onMounted(() => {
 :deep(.el-collapse-item__wrap) { border: none; background: transparent; }
 :deep(.el-collapse-item__content) { padding-bottom: 0; }
 
-/* =========================================
-   Markdown 样式美化 (医疗专业风格) 
-   ========================================= */
+/* Markdown 样式 */
 .markdown-body {
   font-size: 15px;
   line-height: 1.75;
   color: #334155; 
 }
-
-/* 标题 */
 .markdown-body :deep(h1), 
 .markdown-body :deep(h2), 
 .markdown-body :deep(h3) {
@@ -497,8 +509,6 @@ onMounted(() => {
   width: 4px; background: #3b82f6;
   border-radius: 2px;
 }
-
-/* 列表 */
 .markdown-body :deep(ul), 
 .markdown-body :deep(ol) {
   margin-bottom: 1em; padding-left: 1.5em;
@@ -511,23 +521,17 @@ onMounted(() => {
   content: '•'; color: #3b82f6;
   position: absolute; left: -1em; font-weight: bold;
 }
-
-/* 代码 */
 .markdown-body :deep(code) {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   background-color: #f1f5f9; color: #0f172a;
   padding: 0.2em 0.4em; border-radius: 4px; font-size: 85%;
 }
-
-/* 引用块 */
 .markdown-body :deep(blockquote) {
   border-left: 4px solid #3b82f6;
   background: #eff6ff; color: #334155;
   padding: 12px 16px; border-radius: 0 8px 8px 0;
   margin: 1.5em 0; font-style: normal;
 }
-
-/* 链接 */
 .markdown-body :deep(a) {
   color: #2563eb; text-decoration: none;
   border-bottom: 1px dashed #2563eb; transition: all 0.2s;
