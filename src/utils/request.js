@@ -6,7 +6,7 @@ let isRelogging = false
 
 const service = axios.create({
   baseURL: '/api',
-  timeout: 5000
+  timeout: 20000
 })
 
 // === 1. 请求拦截器 (Request) ===
