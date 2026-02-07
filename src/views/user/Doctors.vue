@@ -1,9 +1,9 @@
 <script setup>
 import { ref, computed, onMounted, reactive } from 'vue'
 import { useRouter } from 'vue-router'
-import { Search, Filter, Timer, ArrowRight, CircleCloseFilled, WarningFilled } from '@element-plus/icons-vue'
+import { Search, Filter, Timer, ArrowRight, CircleCloseFilled, WarningFilled, RefreshLeft } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus' 
-import { getDoctorPage, applyDoctorAudit } from '@/api/doctor'
+import { getDoctorPage, applyDoctorAudit,cancelDoctorAudit } from '@/api/doctor'
 import { getDepartments } from '@/api/department'
 
 const router = useRouter() 
@@ -68,34 +68,53 @@ const loadDoctors = async () => {
   }
 }
 
-// 🔥🔥 数据处理核心逻辑 🔥🔥
+// 🔥🔥 数据处理核心逻辑 (修改) 🔥🔥
 const processDoctorData = (doc, index) => {
   const colorStyle = avatarColors[index % avatarColors.length]
   const deptName = doc.deptName || '综合科'
   
-  // 1. 判断是否被禁用 (status = 0)
+  // 1. 基础状态
   const isBanned = doc.status === 0
-  
-  // 2. 判断是否离线 (workStatus = 0)
   const isOffline = doc.workStatus === 0
-
-  // 3. 判断名额是否已满
   const hasQuota = doc.maxDailyAudit > 0
+  
+  // 2. 申请状态 (新增)
+  // 假设后端返回 doc.isApply === 1 代表申请中
+  const isApplying = doc.isApply === 1
 
-  // 4. 计算最终能不能申请 (必须：未禁用 + 在线 + 有名额)
-  const canAudit = !isBanned && !isOffline && hasQuota
+  // 3. 计算按钮能否点击 
+  // 逻辑：如果是申请中，任何情况下(除非封号)都应该能点取消；
+  // 如果没申请，则需判断在线且有名额
+  const canOperate = !isBanned && (isApplying || (!isOffline && hasQuota))
 
-  // 5. 生成按钮文案
-  let availabilityText = ''
+  // 4. 生成按钮文案和样式类型
+  let btnText = ''
+  let btnType = 'primary' // 默认蓝色
+
   if (isBanned) {
-    availabilityText = '账号异常'
+    btnText = '账号异常'
+    btnType = 'disabled'
+  } else if (isApplying) {
+    btnText = '申请中 (点击取消)'
+    btnType = 'warning' // 橙色/黄色，表示待定状态
   } else if (isOffline) {
-    availabilityText = '暂不接诊'
+    btnText = '暂不接诊'
+    btnType = 'disabled'
   } else if (!hasQuota) {
-    availabilityText = '今日额满'
+    btnText = '今日额满'
+    btnType = 'disabled'
   } else {
-    availabilityText = `剩余名额 ${doc.maxDailyAudit}`
+    btnText = '申请专家审核'
+    btnType = 'primary'
   }
+
+  // 5. 右上角状态文案 (Availability Text)
+  let statusText = ''
+  if (isBanned) statusText = '账号异常'
+  else if (isApplying) statusText = '已提交申请'
+  else if (isOffline) statusText = '暂不接诊'
+  else if (!hasQuota) statusText = '今日额满'
+  else statusText = `剩余名额 ${doc.maxDailyAudit}`
 
   return {
     ...doc,
@@ -106,14 +125,19 @@ const processDoctorData = (doc, index) => {
     tags: chronicTagsMap[deptName] || chronicTagsMap['default'],
     
     // 状态标识
-    isBanned,   // 是否被禁用 (红)
-    isOffline,  // 是否离线 (灰)
-    canAudit,   // 最终开关
-    availabilityText
+    isBanned, 
+    isOffline,
+    isApplying, // 是否申请中
+    canOperate, // 是否可操作(申请或取消)
+    
+    // UI展示
+    btnText,
+    btnType,
+    statusText
   }
 }
 
-// === 4. 事件处理 ===
+// === 4. 事件处理 (修改) ===
 const handleFilter = () => {
   currentPage.value = 1 
   loadDoctors()
@@ -126,17 +150,46 @@ const handlePageChange = (page) => {
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
-const handleApplyAudit = (doctor) => {
-  // 防御性编程：虽然按钮禁用了，但逻辑上再挡一道
+// 🔥 核心修改：统一处理申请和取消
+const handleApplyOrCancel = (doctor) => {
+  // 1. 账号封禁拦截
   if (doctor.isBanned) {
-    ElMessage.error('该医生账号目前处于禁用状态，无法申请。')
+    ElMessage.error('该医生账号目前处于禁用状态。')
     return
   }
+
+  // === 分支A：如果是申请中 -> 执行取消逻辑 ===
+  if (doctor.isApplying) {
+    ElMessageBox.confirm(
+      `您确定要撤回向 ${doctor.realName} 医生的审核申请吗？`,
+      '取消申请',
+      {
+        confirmButtonText: '确定撤回',
+        cancelButtonText: '保持申请',
+        type: 'warning',
+        icon: 'WarningFilled'
+      }
+    ).then(async () => {
+      try {
+        // 调用取消接口
+        await cancelDoctorAudit(doctor.id) 
+        ElMessage.success('申请已成功撤回')
+        loadDoctors() // 刷新列表更新状态
+      } catch (error) {
+        console.error('取消失败', error)
+      }
+    }).catch(() => {})
+    return
+  }
+
+  // === 分支B：如果是未申请 -> 执行申请逻辑 ===
+  
+  // 检查状态
   if (doctor.isOffline) {
     ElMessage.warning('该医生当前离线，请稍后再试。')
     return
   }
-  if (!doctor.canAudit) {
+  if (!doctor.maxDailyAudit || doctor.maxDailyAudit <= 0) {
     ElMessage.warning(`抱歉，${doctor.realName} 当前名额已满。`)
     return
   }
@@ -150,22 +203,16 @@ const handleApplyAudit = (doctor) => {
       type: 'info',
       icon: 'UserFilled'
     }
-  )
-    .then(async () => {
-      try {
-        await applyDoctorAudit(doctor.id) 
-        ElMessage.success({
-          message: '申请成功！正在跳转至咨询室...',
-          duration: 2000
-        })
-        setTimeout(() => {
-          router.push('/user/ai-consult')
-        }, 1000)
-      } catch (error) {
-        console.error('申请失败', error)
-      }
-    })
-    .catch(() => {})
+  ).then(async () => {
+    try {
+      await applyDoctorAudit(doctor.id) 
+      ElMessage.success('申请提交成功')
+      // 申请成功后，不跳转，直接刷新列表变成“申请中”状态
+      loadDoctors() 
+    } catch (error) {
+      console.error('申请失败', error)
+    }
+  }).catch(() => {})
 }
 
 onMounted(() => {
@@ -186,50 +233,15 @@ onMounted(() => {
 
     <section class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex flex-col lg:flex-row items-center gap-4 sticky top-0 z-10 backdrop-blur-md bg-white/90">
       <div class="flex-1 w-full lg:w-auto">
-        <el-input
-          v-model="searchQuery"
-          placeholder="搜索专家姓名..."
-          size="large"
-          class="w-full search-input-custom"
-          :prefix-icon="Search"
-          clearable
-          @clear="handleFilter"
-          @keyup.enter="handleFilter"
-        />
+        <el-input v-model="searchQuery" placeholder="搜索专家姓名..." size="large" class="w-full search-input-custom" :prefix-icon="Search" clearable @clear="handleFilter" @keyup.enter="handleFilter" />
       </div>
-
       <div class="flex flex-col sm:flex-row gap-3 w-full lg:w-auto items-center">
-        <el-select 
-          v-model="specialtyFilter" 
-          placeholder="全部科室" 
-          size="large" 
-          class="w-full sm:w-48 filter-select-custom" 
-          clearable
-          @change="handleFilter"
-        >
+        <el-select v-model="specialtyFilter" placeholder="全部科室" size="large" class="w-full sm:w-48 filter-select-custom" clearable @change="handleFilter">
           <template #prefix><el-icon class="text-slate-400"><Filter /></el-icon></template>
           <el-option v-for="item in departmentList" :key="item.id" :label="item.name" :value="item.id" />
         </el-select>
-        
-        <el-checkbox 
-            v-model="isOnlineOnly" 
-            label="仅看在线" 
-            size="large" 
-            border 
-            class="!mr-0 !rounded-xl !bg-slate-50 !border-slate-200"
-            @change="handleFilter"
-        />
-
-        <el-button 
-          size="large" 
-          type="primary" 
-          color="#3b82f6" 
-          :icon="Search" 
-          class="w-full sm:w-auto !font-bold !px-6 !rounded-xl shadow-lg shadow-blue-100"
-          @click="handleFilter"
-        >
-          查找专家
-        </el-button>
+        <el-checkbox v-model="isOnlineOnly" label="仅看在线" size="large" border class="!mr-0 !rounded-xl !bg-slate-50 !border-slate-200" @change="handleFilter" />
+        <el-button size="large" type="primary" color="#3b82f6" :icon="Search" class="w-full sm:w-auto !font-bold !px-6 !rounded-xl shadow-lg shadow-blue-100" @click="handleFilter">查找专家</el-button>
       </div>
     </section>
 
@@ -256,33 +268,21 @@ onMounted(() => {
                <el-icon class="text-red-500 text-xs"><CircleCloseFilled /></el-icon>
                <span class="text-[10px] text-red-600 font-bold">禁用</span>
              </span>
-
+             <span v-else-if="doc.isApplying" class="flex items-center gap-1.5 bg-orange-50 px-2.5 py-1 rounded-full border border-orange-100">
+               <span class="text-[10px] text-orange-600 font-bold">审核中</span>
+             </span>
              <span v-else-if="!doc.isOffline" class="flex items-center gap-1.5 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-100">
-               <span class="relative flex h-2 w-2">
-                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-               </span>
+               <span class="relative flex h-2 w-2"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span></span>
                <span class="text-[10px] text-emerald-600 font-bold">在线</span>
              </span>
-
              <span v-else class="text-[10px] text-slate-400 bg-slate-100 px-2.5 py-1 rounded-full border border-slate-200 flex items-center gap-1">
-               <span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
-               离线
+               <span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span>离线
              </span>
           </div>
 
           <div class="mb-4 relative">
-             <img 
-               v-if="doc.avatarUrl" 
-               :src="doc.avatarUrl" 
-               class="w-20 h-20 rounded-full object-cover shadow-sm border-2 border-white group-hover:scale-105 transition-transform duration-300"
-               :class="{ 'grayscale': doc.isBanned || doc.isOffline }"
-             />
-             <div 
-               v-else 
-               :class="['w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold shadow-sm transition-transform group-hover:scale-105 duration-300', doc.avatarBg, doc.avatarColor]"
-               :style="doc.isBanned || doc.isOffline ? 'filter: grayscale(1); opacity: 0.7' : ''"
-             >
+             <img v-if="doc.avatarUrl" :src="doc.avatarUrl" class="w-20 h-20 rounded-full object-cover shadow-sm border-2 border-white group-hover:scale-105 transition-transform duration-300" :class="{ 'grayscale': doc.isBanned || doc.isOffline }" />
+             <div v-else :class="['w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold shadow-sm transition-transform group-hover:scale-105 duration-300', doc.avatarBg, doc.avatarColor]" :style="doc.isBanned || doc.isOffline ? 'filter: grayscale(1); opacity: 0.7' : ''">
                {{ doc.avatarText }}
              </div>
           </div>
@@ -295,9 +295,7 @@ onMounted(() => {
           </div>
           
           <div class="flex flex-wrap justify-center gap-1.5 mb-6 min-h-[24px]">
-             <span v-for="tag in doc.tags.slice(0, 3)" :key="tag" class="px-2 py-0.5 rounded text-[10px] bg-blue-50 text-blue-600/80 font-medium">
-               {{ tag }}
-             </span>
+             <span v-for="tag in doc.tags.slice(0, 3)" :key="tag" class="px-2 py-0.5 rounded text-[10px] bg-blue-50 text-blue-600/80 font-medium">{{ tag }}</span>
           </div>
 
           <div class="w-full mt-auto space-y-3 pt-4 border-t border-slate-50">
@@ -305,32 +303,36 @@ onMounted(() => {
                 <span class="text-slate-400">接诊状态</span>
                 <span :class="[
                   doc.isBanned ? 'text-red-500 font-bold' : 
+                  doc.isApplying ? 'text-orange-500 font-bold' :
                   doc.isOffline ? 'text-slate-400' : 
                   !doc.canAudit ? 'text-orange-500' : 
                   'font-bold text-emerald-600'
                 ]">
-                  {{ doc.availabilityText }}
+                  {{ doc.statusText }}
                 </span>
              </div>
 
              <button 
-                @click="handleApplyAudit(doc)"
-                :disabled="!doc.canAudit"
+                @click="handleApplyOrCancel(doc)"
+                :disabled="!doc.canOperate"
                 class="w-full py-2.5 rounded-xl text-sm font-bold transition-all duration-300 flex items-center justify-center gap-2 group/btn"
                 :class="[
-                  doc.isBanned 
-                    ? 'bg-red-50 text-red-400 cursor-not-allowed border border-red-100' // 禁用样式
-                    : !doc.canAudit 
-                      ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200' // 离线或无名额样式
-                      : 'bg-gradient-to-r from-brand-blue to-blue-600 text-white shadow-md hover:shadow-lg active:scale-95 bg-blue-500' // 正常样式
+                  // 1. 禁用样式
+                  doc.btnType === 'disabled' 
+                    ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200' 
+                    
+                  // 2. 申请中(取消)样式 - 橙色
+                  : doc.btnType === 'warning'
+                    ? 'bg-orange-50 text-orange-600 border border-orange-200 hover:bg-orange-100 hover:border-orange-300'
+                    
+                  // 3. 默认申请样式 - 蓝色渐变
+                  : 'bg-gradient-to-r from-brand-blue to-blue-600 text-white shadow-md hover:shadow-lg active:scale-95 bg-blue-500' 
                 ]"
              >
-                <span v-if="doc.isBanned">已停用</span>
-                <span v-else-if="doc.isOffline">暂不可用</span>
-                <span v-else-if="!doc.canAudit">名额已满</span>
-                <span v-else>申请专家审核</span>
+                {{ doc.btnText }}
 
-                <el-icon v-if="doc.canAudit" class="transition-transform group-hover/btn:translate-x-1"><ArrowRight /></el-icon>
+                <el-icon v-if="doc.isApplying" class="transition-transform"><RefreshLeft /></el-icon>
+                <el-icon v-else-if="!doc.isBanned && !doc.isOffline && !doc.isApplying && doc.canAudit" class="transition-transform group-hover/btn:translate-x-1"><ArrowRight /></el-icon>
              </button>
           </div>
 
@@ -339,21 +341,14 @@ onMounted(() => {
     </section>
 
     <div class="flex justify-center mt-12" v-if="total > 0">
-      <el-pagination
-        background
-        layout="prev, pager, next"
-        :total="total"
-        :page-size="pageSize"
-        v-model:current-page="currentPage"
-        @current-change="handlePageChange"
-      />
+      <el-pagination background layout="prev, pager, next" :total="total" :page-size="pageSize" v-model:current-page="currentPage" @current-change="handlePageChange" />
     </div>
 
   </div>
 </template>
 
 <style scoped>
-/* 样式保持不变，复用你之前的 */
+/* 样式复用 */
 :deep(.search-input-custom .el-input__wrapper),
 :deep(.filter-select-custom .el-input__wrapper) {
   border-radius: 12px;

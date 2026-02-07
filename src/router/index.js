@@ -93,7 +93,22 @@ const router = createRouter({
           name: 'DoctorDashboard',
           component: () => import('@/views/doctor/Dashboard.vue')
         },
-        
+        {
+          path: 'review',
+          name: 'DoctorReview',
+          component: () => import('@/views/doctor/DoctorReview.vue')
+        },
+        {
+          path: 'doctorApplyList',
+          name: 'DoctorApplyList',
+          component: () => import('@/views/doctor/DoctorApplyList.vue')
+        },
+        {
+          path: 'audit',
+          name: 'DoctorAudit',
+          component: () => import('@/views/doctor/DoctorAudit.vue'), // 列表页
+          meta: { title: '咨询申请管理' }
+        },
       ]
     },
 

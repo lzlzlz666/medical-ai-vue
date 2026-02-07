@@ -90,3 +90,45 @@ export function applyDoctorAudit(doctorId) {
     method: 'post'
   })
 }
+
+
+/**
+ * 取消问诊/申请
+ * 对应后端: @DeleteMapping("/cancel")
+ * @param {Number|String} doctorId 医生ID
+ */
+export function cancelDoctorAudit(doctorId) {
+  return request({
+    url: '/user/consultation/cancel', 
+    method: 'delete',
+    params: {
+      doctorId: doctorId
+    }
+  })
+}
+
+// 分页获取审核列表
+// 后端参数: { queryDate: "yyyy-MM-dd", status: 1, page: 1, pageSize: 10 }
+export function getDoctorAuditPage(data) {
+  return request({
+    url: '/doctor/user/page', // 根据你的截图 URL 填写
+    method: 'post', // 截图有 Body，通常是 POST
+    data // data 会被序列化为 JSON body
+  })
+}
+
+/**
+ * 处理患者咨询 (接收/拒绝)
+ * 后端: @PutMapping("/doctor/user/process")
+ * 参数: processId (2=接收, 3=拒绝), userId (用户ID)
+ */
+export function auditConsultation(params) {
+  return request({
+    url: '/doctor/user/process', // 修改为真实路径
+    method: 'put',               // 修改为 PUT
+    params: {                    // 使用 params (Query String)
+      processId: params.status,  // 前端传过来的 status (2或3) 映射给 processId
+      userId: params.userId      // 前端传过来的 userId
+    }
+  })
+}

@@ -45,7 +45,7 @@ const loadData = async () => {
       calculateStats(list)
       ElMessage.success(`数据同步完成，获取到 ${list.length} 条记录`)
     } else {
-      ElMessage.info('近30天暂无体征数据')
+      ElMessage.info('本月暂无体征数据')
       rawData.value = []
       calculateStats([]) 
     }
@@ -106,7 +106,7 @@ const handleGenerateReport = async () => {
   
   try {
     // 构造 Prompt
-    let messagePrompt = "请扮演一位资深全科医生，基于患者近30天的监测数据生成一份专业的健康评估报告。\n\n【患者监测数据详情】：\n"
+    let messagePrompt = "请扮演一位资深全科医生，基于患者本月的监测数据生成一份专业的健康评估报告。\n\n【患者监测数据详情】：\n"
     
     let validCount = 0
     const dataDesc = rawData.value.map(item => {
@@ -143,7 +143,7 @@ const handleGenerateReport = async () => {
       aiReport.title = res.title || '多维健康综合分析报告'
       aiReport.score = Math.round(res.score || 80) 
       aiReport.suggestions = res.suggestions || []
-      aiReport.summary = `AI 已完成对您过去 30 天数据的深度建模分析。本次分析涵盖了 ${selectedTypes.value.length} 个维度，共计分析了 ${validCount} 条有效监测记录。综合健康评分为 ${aiReport.score} 分。`
+      aiReport.summary = `AI 已完成对您本月数据的深度建模分析。本次分析涵盖了 ${selectedTypes.value.length} 个维度，共计分析了 ${validCount} 条有效监测记录。综合健康评分为 ${aiReport.score} 分。`
       
       reportReady.value = true
       ElMessage.success('报告生成成功')
@@ -183,7 +183,7 @@ onMounted(() => {
         </div>
         <h1 class="text-4xl font-extrabold text-slate-800 mb-3 tracking-tight">AI 智能健康监测报告</h1>
         <p class="text-slate-500 text-base max-w-2xl text-center">
-          基于您近30天的真实体征数据，利用大模型生成精准的个性化医疗建议。
+          基于您本月的真实 【血糖 | 血压 | 心率】 数据，利用大模型生成精准的个性化医疗建议。
         </p>
       </div>
 
@@ -251,7 +251,7 @@ onMounted(() => {
         <div class="lg:col-span-4 space-y-6">
           <div class="flex items-center gap-2 mb-2 px-1">
             <h3 class="font-bold text-slate-800 text-lg">数据源概览</h3>
-            <span class="text-xs bg-slate-200 text-slate-600 px-2 py-0.5 rounded-md">近30天</span>
+            <span class="text-xs bg-slate-200 text-slate-600 px-2 py-0.5 rounded-md">本月</span>
           </div>
 
           <div class="group bg-white rounded-3xl p-6 shadow-sm border border-slate-100 hover:shadow-xl hover:shadow-emerald-500/10 hover:border-emerald-200 hover:-translate-y-1 transition-all duration-300 relative overflow-hidden">

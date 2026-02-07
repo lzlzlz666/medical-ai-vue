@@ -15,3 +15,23 @@ export function getSessionMessages(sessionId) {
     method: 'get'
   })
 }
+
+// 🔥🔥🔥 获取待审核的临时数据 (用于医生审核) 🔥🔥🔥
+export function getTempAuditMessages(sessionId) {
+  return request({
+    url: `/doctor/consultation/tempAudit/${sessionId}`,
+    method: 'get'
+  })
+}
+
+// 🔥🔥🔥 新增：提交审核结果 (通过/修改) 🔥🔥🔥
+// 对应截图接口: PUT /doctor/consultation/audit/{sessionId}?message=...
+export function submitAuditResult(sessionId, message) {
+  return request({
+    url: `/doctor/consultation/audit/${sessionId}`,
+    method: 'put',
+    params: { 
+      message 
+    }
+  })
+}

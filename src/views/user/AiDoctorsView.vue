@@ -1,7 +1,8 @@
 <script setup>
-import { ref, nextTick, onMounted } from 'vue'
+import { ref, nextTick, onMounted, computed } from 'vue'
 import { 
-  Search, Picture, Folder, Cpu, Position, Loading, Collection, Close, MoreFilled, PhoneFilled
+  Search, Picture, Folder, Cpu, Position, Loading, Collection, Close, MoreFilled, PhoneFilled,
+  Warning, CircleCheckFilled, EditPen // 新增 EditPen 图标用于医生批注
 } from '@element-plus/icons-vue'
 import { getSessionList, getSessionMessages } from '@/api/consultation' 
 import { uploadFile } from '@/api/user' 
@@ -35,6 +36,17 @@ const isRAGEnabled = ref(true)
 const fileInputRef = ref(null) 
 const uploadFiles = ref([]) 
 
+// 🔥🔥🔥 新增：计算属性判断是否允许发送 🔥🔥🔥
+// 规则：只要最后一条消息是 AI 发的且状态为 0 (审核中)，就禁止发送
+const isInputDisabled = computed(() => {
+  if (chatHistory.value.length === 0) return false
+  const lastMsg = chatHistory.value[chatHistory.value.length - 1]
+  // 正在发送中也禁用
+  if (isSending.value) return true
+  // 最后一条是 AI 且 状态是 0 -> 禁用
+  return lastMsg.role === 'ai' && lastMsg.status === 0
+})
+
 // === 工具函数 ===
 const parseMessageContent = (rawContent) => {
   if (!rawContent) return { reasoning: '', content: '' }
@@ -54,7 +66,10 @@ const formatTime = (timeStr) => {
 }
 
 // === 图片上传逻辑 ===
-const triggerFileUpload = () => fileInputRef.value.click()
+const triggerFileUpload = () => {
+  if (isInputDisabled.value) return // 禁用状态下无法点击
+  fileInputRef.value.click()
+}
 
 const handleFileChange = (event) => {
   const files = Array.from(event.target.files)
@@ -63,6 +78,7 @@ const handleFileChange = (event) => {
 }
 
 const handlePaste = (event) => {
+  if (isInputDisabled.value) return // 禁用状态下无法粘贴
   const items = event.clipboardData && event.clipboardData.items
   const files = []
   if (items) {
@@ -154,6 +170,10 @@ const loadMessages = async (sessionId) => {
       const content = msg.content
       const lastMsg = groupedMessages[groupedMessages.length - 1]
 
+      const status = msg.msgStatus !== undefined ? msg.msgStatus : (msg.msg_status !== undefined ? msg.msg_status : 1)
+      // 🔥🔥🔥 获取 doctorSummary 🔥🔥🔥
+      const doctorSummary = msg.doctorSummary || null 
+
       if (lastMsg && lastMsg.role === role) {
         if (msg.msgType === 2) {
           lastMsg.images.push(content)
@@ -165,6 +185,8 @@ const loadMessages = async (sessionId) => {
            lastMsg.content = parsed.content
            lastMsg.reasoning = parsed.reasoning
            lastMsg.time = formatTime(msg.createTime)
+           lastMsg.status = status 
+           lastMsg.doctorSummary = doctorSummary // 更新 summary
            return
         }
       }
@@ -180,7 +202,9 @@ const loadMessages = async (sessionId) => {
         time: formatTime(msg.createTime),
         type: msg.msgType === 2 ? 'image' : 'text', 
         images: msg.msgType === 2 ? [content] : [],
-        isThinking: false 
+        isThinking: false,
+        status: status,
+        doctorSummary: doctorSummary // 存入对象
       })
     })
 
@@ -203,6 +227,12 @@ const handleSelectSession = (session) => {
 
 // === 核心发送逻辑 ===
 const handleSendMessage = async () => {
+  // 🔥🔥🔥 1. 状态拦截 🔥🔥🔥
+  if (isInputDisabled.value) {
+    ElMessage.warning('请等待医生审核上一条回复后再提问')
+    return
+  }
+
   const text = inputContent.value.trim()
   const hasImages = uploadFiles.value.length > 0
 
@@ -212,6 +242,7 @@ const handleSendMessage = async () => {
   const currentUserAvatar = userStore.userInfo.avatar || 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'
   const localImageUrls = uploadFiles.value.map(f => f.preview)
   
+  // 1. 用户消息上屏
   chatHistory.value.push({
     id: Date.now(),
     role: 'user',
@@ -223,6 +254,7 @@ const handleSendMessage = async () => {
     images: localImageUrls 
   })
 
+  // 2. AI 占位消息
   const aiMsgId = Date.now() + 1
   chatHistory.value.push({
     id: aiMsgId,
@@ -233,7 +265,9 @@ const handleSendMessage = async () => {
     reasoning: '', 
     time: formatTime(new Date()),
     type: 'text',
-    isThinking: true 
+    isThinking: true,
+    status: 0, // 默认为审核中
+    doctorSummary: null
   })
 
   const currentAiMsg = chatHistory.value[chatHistory.value.length - 1]
@@ -309,6 +343,15 @@ const handleSendMessage = async () => {
           const data = JSON.parse(jsonStr)
           if (data.thinking) currentAiMsg.reasoning += data.thinking
           if (data.answer) currentAiMsg.content += data.answer
+          
+          // 更新 status
+          if (data.status !== undefined) currentAiMsg.status = Number(data.status)
+          else if (data.msgStatus !== undefined) currentAiMsg.status = Number(data.msgStatus)
+          else if (data.msg_status !== undefined) currentAiMsg.status = Number(data.msg_status)
+
+          // 更新 doctorSummary
+          if (data.doctorSummary) currentAiMsg.doctorSummary = data.doctorSummary
+
           await new Promise(resolve => setTimeout(resolve, 10))
           scrollToBottom()
         } catch (e) {
@@ -378,27 +421,17 @@ onMounted(() => {
       
       <div class="h-[64px] bg-white border-b border-slate-100 px-6 flex items-center justify-between flex-shrink-0 z-10 sticky top-0">
         <div class="flex items-center">
-           
            <div class="flex items-center mr-3">
               <div class="w-9 h-9 rounded-full bg-blue-600 flex items-center justify-center text-white border-2 border-white relative z-0">
                  <el-icon :size="18"><Cpu /></el-icon>
               </div>
-              <img 
-                :src="currentSession.avatar || 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'" 
-                class="w-9 h-9 rounded-full border-2 border-white -ml-3 relative z-10 bg-slate-200 object-cover" 
-              />
+              <img :src="currentSession.avatar || 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'" class="w-9 h-9 rounded-full border-2 border-white -ml-3 relative z-10 bg-slate-200 object-cover" />
            </div>
-
            <div class="flex items-center gap-2">
-             <h3 class="font-bold text-slate-800 text-[15px]">
-               AI 医疗助手 + {{ currentSession.name || '张主任' }}
-             </h3>
-             <span class="px-2 py-0.5 bg-indigo-50 text-indigo-600 text-[10px] font-bold rounded-md border border-indigo-100 tracking-wide">
-               AI CO-PILOT
-             </span>
+             <h3 class="font-bold text-slate-800 text-[15px]">AI 医疗助手 + {{ currentSession.name || '张主任' }}</h3>
+             <span class="px-2 py-0.5 bg-indigo-50 text-indigo-600 text-[10px] font-bold rounded-md border border-indigo-100 tracking-wide">AI CO-PILOT</span>
            </div>
         </div>
-
         <div class="flex items-center gap-4 text-slate-400">
            <el-icon class="hover:text-blue-600 cursor-pointer transition-colors" :size="20"><PhoneFilled /></el-icon>
            <el-icon class="hover:text-blue-600 cursor-pointer transition-colors" :size="20"><MoreFilled /></el-icon>
@@ -406,21 +439,22 @@ onMounted(() => {
       </div>
 
       <div ref="chatContainerRef" class="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar scroll-smooth">
-        <div v-for="msg in chatHistory" :key="msg.id" class="w-full animate-fade-in-up">
+        <div v-for="(msg, index) in chatHistory" :key="msg.id" class="w-full animate-fade-in-up">
           
           <div v-if="msg.role === 'ai'" class="flex gap-4 max-w-[95%]">
              <div class="w-10 h-10 rounded-full bg-gradient-to-b from-blue-500 to-blue-700 flex-shrink-0 flex items-center justify-center text-white shadow-lg shadow-blue-200 mt-1 ring-2 ring-white">
                 <el-icon :size="20"><Cpu /></el-icon>
              </div>
-             <div class="flex-1 min-w-0 space-y-4">
-                <div class="flex items-center gap-2">
+             <div class="flex-1 min-w-0 space-y-2">
+                <div class="flex items-center gap-2 mb-1">
                    <span class="text-xs font-bold text-slate-500">AI 医疗助手</span>
                    <span v-if="msg.isThinking && !msg.content" class="flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-100 border border-violet-200">
                       <el-icon class="is-loading text-violet-600" :size="12"><Loading /></el-icon>
                       <span class="text-[10px] text-violet-600 font-bold">R1 深度推理中...</span>
                    </span>
                 </div>
-                <div v-if="msg.reasoning" class="relative group">
+
+                <div v-if="msg.reasoning" class="relative group mb-2">
                    <el-collapse :model-value="['1']" class="!border-none">
                       <el-collapse-item name="1">
                         <template #title>
@@ -441,10 +475,43 @@ onMounted(() => {
                       </el-collapse-item>
                    </el-collapse>
                 </div>
-                <div v-if="msg.content" class="bg-white p-5 rounded-2xl rounded-tl-none shadow-sm border border-slate-100 text-slate-700 text-[15px] leading-7 tracking-wide relative z-10">
-                   <div class="markdown-body" v-html="renderMarkdown(msg.content)"></div>
-                   <span v-if="msg.isThinking" class="inline-block w-2 h-4 bg-blue-500 animate-pulse align-middle ml-1 rounded-sm"></span>
+
+                <div class="relative">
+                   <div 
+                     v-if="msg.content" 
+                     class="bg-white p-5 rounded-2xl rounded-tl-none shadow-sm border border-slate-100 text-slate-700 text-[15px] leading-7 tracking-wide relative z-10 transition-all duration-300"
+                     :class="{'opacity-90 ring-2 ring-orange-100 border-orange-200': msg.status === 0 && index === chatHistory.length - 1}" 
+                   >
+                      <div class="markdown-body" v-html="renderMarkdown(msg.content)"></div>
+                      <span v-if="msg.isThinking" class="inline-block w-2 h-4 bg-blue-500 animate-pulse align-middle ml-1 rounded-sm"></span>
+                   </div>
+
+                   <div v-if="msg.doctorSummary" class="mt-3 ml-1 animate-fade-in-up">
+                      <div class="bg-blue-50 border border-blue-100 rounded-xl p-3 relative">
+                        <div class="absolute -top-1.5 left-4 w-3 h-3 bg-blue-50 border-t border-l border-blue-100 transform rotate-45"></div>
+                        <div class="flex items-start gap-2">
+                          <div class="mt-0.5 p-1 bg-blue-100 rounded-md text-blue-600">
+                            <el-icon :size="14"><EditPen /></el-icon>
+                          </div>
+                          <div>
+                            <div class="text-xs font-bold text-blue-700 mb-1">医生批注 & 总结</div>
+                            <div class="text-sm text-slate-700 leading-relaxed text-justify">{{ msg.doctorSummary }}</div>
+                          </div>
+                        </div>
+                      </div>
+                   </div>
+
+                   <div v-if="msg.status === 0 && index === chatHistory.length - 1" class="flex items-center gap-1.5 mt-2 ml-1 text-orange-500 animate-pulse transition-all duration-300">
+                      <el-icon :size="14"><Warning /></el-icon>
+                      <span class="text-[11px] font-bold tracking-wide">内容审核中，等待医生确认...</span>
+                   </div>
+                   
+                   <div v-else-if="msg.status === 1 && !msg.isThinking && index === chatHistory.length - 1" class="flex items-center gap-1.5 mt-2 ml-1 text-emerald-600 opacity-90 transition-all duration-500 animate-fade-in-up">
+                      <el-icon :size="14"><CircleCheckFilled /></el-icon>
+                      <span class="text-[11px] font-bold tracking-wide">医生已确认，内容合规</span>
+                   </div>
                 </div>
+
                 <div v-if="!msg.reasoning && !msg.content && msg.isThinking" class="bg-white px-5 py-4 rounded-2xl rounded-tl-none shadow-sm border border-slate-100 w-fit">
                    <div class="flex items-center gap-2 text-slate-400 text-sm">
                       <span class="relative flex h-3 w-3"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span><span class="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span></span>
@@ -457,36 +524,14 @@ onMounted(() => {
           <div v-if="msg.role === 'user'" class="flex flex-row-reverse gap-4 max-w-[85%] ml-auto">
              <img :src="msg.avatar" class="w-10 h-10 rounded-full bg-slate-200 border-2 border-white shadow-sm flex-shrink-0 object-cover" />
              <div class="flex flex-col items-end gap-2">
-                
-                <div v-if="msg.images && msg.images.length > 0" 
-                     class="grid gap-1.5 transition-all duration-300" 
-                     :class="msg.images.length >= 2 ? 'grid-cols-2 w-fit' : 'grid-cols-1'">
-                   <div v-for="(imgUrl, idx) in msg.images" :key="idx" 
-                        class="relative group rounded-xl overflow-hidden shadow-sm border border-slate-200/60 bg-white"
-                        :class="msg.images.length === 1 ? 'max-w-[280px]' : 'w-32 h-32'">
-                      
-                      <el-image 
-                        :src="imgUrl" 
-                        :preview-src-list="msg.images" 
-                        :initial-index="idx" 
-                        fit="cover" 
-                        preview-teleported
-                        hide-on-click-modal
-                        class="w-full h-full object-cover cursor-zoom-in transition-transform duration-500 group-hover:scale-105"
-                        :class="msg.images.length === 1 ? 'h-auto max-h-[300px]' : ''" 
-                      >
-                        <template #placeholder>
-                          <div class="flex items-center justify-center h-full bg-slate-100 text-slate-400 text-xs">...</div>
-                        </template>
+                <div v-if="msg.images && msg.images.length > 0" class="grid gap-1.5 transition-all duration-300" :class="msg.images.length >= 2 ? 'grid-cols-2 w-fit' : 'grid-cols-1'">
+                   <div v-for="(imgUrl, idx) in msg.images" :key="idx" class="relative group rounded-xl overflow-hidden shadow-sm border border-slate-200/60 bg-white" :class="msg.images.length === 1 ? 'max-w-[280px]' : 'w-32 h-32'">
+                      <el-image :src="imgUrl" :preview-src-list="msg.images" :initial-index="idx" fit="cover" preview-teleported hide-on-click-modal class="w-full h-full object-cover cursor-zoom-in transition-transform duration-500 group-hover:scale-105" :class="msg.images.length === 1 ? 'h-auto max-h-[300px]' : ''">
+                        <template #placeholder><div class="flex items-center justify-center h-full bg-slate-100 text-slate-400 text-xs">...</div></template>
                       </el-image>
                    </div>
                 </div>
-
-                <div v-if="msg.content" 
-                     class="bg-blue-600 px-4 py-3 rounded-2xl rounded-tr-none shadow-md shadow-blue-100 text-white text-[15px] leading-relaxed whitespace-pre-wrap min-w-[60px] max-w-full">
-                   {{ msg.content }}
-                </div>
-                
+                <div v-if="msg.content" class="bg-blue-600 px-4 py-3 rounded-2xl rounded-tr-none shadow-md shadow-blue-100 text-white text-[15px] leading-relaxed whitespace-pre-wrap min-w-[60px] max-w-full">{{ msg.content }}</div>
                 <span class="text-[10px] text-slate-400 font-medium pr-1">{{ msg.time }}</span>
              </div>
           </div>
@@ -502,7 +547,17 @@ onMounted(() => {
       </div>
 
       <div class="p-6 pt-2">
-         <div class="bg-white rounded-3xl shadow-lg shadow-slate-200/50 border border-slate-100 transition-all duration-300 focus-within:shadow-xl focus-within:border-blue-100 overflow-hidden relative">
+         <div 
+           class="bg-white rounded-3xl shadow-lg shadow-slate-200/50 border border-slate-100 transition-all duration-300 focus-within:shadow-xl focus-within:border-blue-100 overflow-hidden relative"
+           :class="{'opacity-75 pointer-events-none cursor-not-allowed grayscale-[0.5]': isInputDisabled}" 
+         >
+            <div v-if="isInputDisabled" class="absolute inset-0 z-50 flex items-center justify-center bg-white/60 backdrop-blur-[1px]">
+               <div class="bg-orange-50 text-orange-600 px-4 py-2 rounded-full text-xs font-bold border border-orange-100 shadow-sm flex items-center gap-2">
+                 <el-icon><Warning /></el-icon>
+                 请等待医生审核上一条建议后再进行提问
+               </div>
+            </div>
+
             <div v-if="uploadFiles.length > 0" class="flex gap-3 px-4 pt-3 pb-1 overflow-x-auto custom-scrollbar">
               <div v-for="(item, index) in uploadFiles" :key="index" class="relative group flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border border-slate-200">
                 <img :src="item.preview" class="w-full h-full object-cover" />
@@ -513,34 +568,34 @@ onMounted(() => {
             </div>
             <textarea 
               v-model="inputContent"
-              class="w-full bg-transparent border-none outline-none text-[15px] text-slate-700 px-4 py-3 resize-none h-14 min-h-[56px] max-h-32 custom-scrollbar placeholder-slate-400"
-              placeholder="请描述您的症状、既往病史，或上传检查报告（支持 Ctrl+V 粘贴图片）..."
+              class="w-full bg-transparent border-none outline-none text-[15px] text-slate-700 px-4 py-3 resize-none h-14 min-h-[56px] max-h-32 custom-scrollbar placeholder-slate-400 disabled:bg-slate-50"
+              :placeholder="isInputDisabled ? '等待医生审核中...' : '请描述您的症状、既往病史，或上传检查报告（支持 Ctrl+V 粘贴图片）...'"
               @keydown.enter.prevent="handleSendMessage"
               @paste="handlePaste"
-              :disabled="isSending"
+              :disabled="isSending || isInputDisabled"
             ></textarea>
             <div class="flex items-center justify-between px-4 pb-3 pt-2 bg-white">
                <div class="flex items-center gap-4">
                   <div class="flex gap-1 pr-4 border-r border-slate-100">
                       <el-tooltip content="上传图片" placement="top">
-                         <button @click="triggerFileUpload" class="p-2 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all">
+                         <button @click="triggerFileUpload" class="p-2 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all" :disabled="isInputDisabled">
                            <el-icon :size="20"><Picture /></el-icon>
                          </button>
                       </el-tooltip>
                       <el-tooltip content="上传文件" placement="top">
-                         <button class="p-2 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all"><el-icon :size="20"><Folder /></el-icon></button>
+                         <button class="p-2 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all" :disabled="isInputDisabled"><el-icon :size="20"><Folder /></el-icon></button>
                       </el-tooltip>
                   </div>
                   <div class="flex gap-2">
-                    <button @click="isDeepThinking = !isDeepThinking" class="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200 border select-none" :class="isDeepThinking ? 'bg-indigo-50 text-indigo-600 border-indigo-200' : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'">
+                    <button @click="isDeepThinking = !isDeepThinking" class="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200 border select-none" :class="isDeepThinking ? 'bg-indigo-50 text-indigo-600 border-indigo-200' : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'" :disabled="isInputDisabled">
                       <el-icon :class="isDeepThinking ? 'animate-pulse' : ''"><Cpu /></el-icon><span>深度思考 R1</span>
                     </button>
-                    <button @click="isRAGEnabled = !isRAGEnabled" class="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold border select-none transition-all duration-200" :class="isRAGEnabled ? 'bg-orange-50 text-orange-600 border-orange-200 hover:bg-orange-100' : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'">
+                    <button @click="isRAGEnabled = !isRAGEnabled" class="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold border select-none transition-all duration-200" :class="isRAGEnabled ? 'bg-orange-50 text-orange-600 border-orange-200 hover:bg-orange-100' : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'" :disabled="isInputDisabled">
                       <el-icon><Collection /></el-icon><span>知识库 RAG {{ isRAGEnabled ? '(已启用)' : '(已关闭)' }}</span>
                     </button>
                   </div>
                </div>
-               <button @click="handleSendMessage" :disabled="(!inputContent.trim() && uploadFiles.length === 0) || isSending" class="bg-blue-600 text-white w-10 h-10 rounded-xl shadow-lg shadow-blue-200 hover:bg-blue-700 hover:shadow-blue-300 active:scale-95 transition-all flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none">
+               <button @click="handleSendMessage" :disabled="(!inputContent.trim() && uploadFiles.length === 0) || isSending || isInputDisabled" class="bg-blue-600 text-white w-10 h-10 rounded-xl shadow-lg shadow-blue-200 hover:bg-blue-700 hover:shadow-blue-300 active:scale-95 transition-all flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none">
                   <el-icon :size="18" v-if="!isSending"><Position /></el-icon>
                   <el-icon :size="18" v-else class="is-loading"><Loading /></el-icon>
                </button>
