@@ -2,7 +2,7 @@
 import { ref, nextTick, onMounted, computed } from 'vue'
 import { 
   Search, Picture, Folder, Cpu, Position, Loading, Collection, Close, MoreFilled, PhoneFilled,
-  Warning, CircleCheckFilled, EditPen // 新增 EditPen 图标用于医生批注
+  Warning, CircleCheckFilled, EditPen, Lock 
 } from '@element-plus/icons-vue'
 import { getSessionList, getSessionMessages } from '@/api/consultation' 
 import { uploadFile } from '@/api/user' 
@@ -36,25 +36,31 @@ const isRAGEnabled = ref(true)
 const fileInputRef = ref(null) 
 const uploadFiles = ref([]) 
 
-// 🔥🔥🔥 新增：计算属性判断是否允许发送 🔥🔥🔥
-// 规则：只要最后一条消息是 AI 发的且状态为 0 (审核中)，就禁止发送
+// 是否允许发送
 const isInputDisabled = computed(() => {
   if (chatHistory.value.length === 0) return false
   const lastMsg = chatHistory.value[chatHistory.value.length - 1]
-  // 正在发送中也禁用
   if (isSending.value) return true
-  // 最后一条是 AI 且 状态是 0 -> 禁用
   return lastMsg.role === 'ai' && lastMsg.status === 0
 })
 
-// === 工具函数 ===
+// === 工具函数：解析历史消息 ===
 const parseMessageContent = (rawContent) => {
   if (!rawContent) return { reasoning: '', content: '' }
-  const regex = /<think>([\s\S]*?)<\/think>([\s\S]*)/
+  // 匹配 <think>...</think>
+  const regex = /<think>([\s\S]*?)<\/think>/i
   const match = rawContent.match(regex)
   if (match) {
-    return { reasoning: match[1].trim(), content: match[2].trim() }
+    const reasoning = match[1].trim() // 提取思考过程
+    const content = rawContent.replace(match[0], '').trim() // 移除标签后的正文
+    return { reasoning, content }
   } else {
+    // 如果只有 <think> 开头但没结尾（极少见的历史数据异常），视为全思考
+    if (rawContent.trim().startsWith('<think>')) {
+      const reasoning = rawContent.replace('<think>', '').trim()
+      return { reasoning, content: '' } 
+    }
+    // 普通文本，无思考过程
     return { reasoning: '', content: rawContent }
   }
 }
@@ -67,8 +73,7 @@ const formatTime = (timeStr) => {
 
 // === 图片上传逻辑 ===
 const triggerFileUpload = () => {
-  if (isInputDisabled.value) return // 禁用状态下无法点击
-  fileInputRef.value.click()
+  if (!isInputDisabled.value) fileInputRef.value.click()
 }
 
 const handleFileChange = (event) => {
@@ -78,7 +83,7 @@ const handleFileChange = (event) => {
 }
 
 const handlePaste = (event) => {
-  if (isInputDisabled.value) return // 禁用状态下无法粘贴
+  if (isInputDisabled.value) return 
   const items = event.clipboardData && event.clipboardData.items
   const files = []
   if (items) {
@@ -123,7 +128,7 @@ const uploadImageToServer = async (file) => {
   }
 }
 
-// === 加载逻辑 ===
+// === 加载会话 ===
 const loadSessions = async () => {
   try {
     const res = await getSessionList()
@@ -137,14 +142,30 @@ const loadSessions = async () => {
       status: item.status, 
       online: item.status === 1
     }))
+    
     if (sessionList.value.length > 0 && !activeSessionId.value) {
-      handleSelectSession(sessionList.value[0])
+      const validSession = sessionList.value.find(s => s.status === 2)
+      if (validSession) handleSelectSession(validSession)
     }
   } catch (error) {
     console.error('加载会话列表失败', error)
   }
 }
 
+const handleSelectSession = (session) => {
+  if (session.status !== 2) {
+    ElMessage.warning('请您申请并等待医生的同意')
+    return
+  }
+  if (isSending.value) return ElMessage.warning('请等待当前对话结束')
+  
+  activeSessionId.value = session.id
+  currentSession.value = session 
+  loadMessages(session.id)
+  uploadFiles.value = [] 
+}
+
+// === 加载消息 ===
 const loadMessages = async (sessionId) => {
   loading.value = true
   chatHistory.value = [] 
@@ -166,45 +187,27 @@ const loadMessages = async (sessionId) => {
         avatar = currentSession.value.avatar
       }
       
-      const isImage = msg.msgType === 2
       const content = msg.content
-      const lastMsg = groupedMessages[groupedMessages.length - 1]
-
-      const status = msg.msgStatus !== undefined ? msg.msgStatus : (msg.msg_status !== undefined ? msg.msg_status : 1)
-      // 🔥🔥🔥 获取 doctorSummary 🔥🔥🔥
+      const status = msg.msgStatus !== undefined ? msg.msgStatus : 1
       const doctorSummary = msg.doctorSummary || null 
 
-      if (lastMsg && lastMsg.role === role) {
-        if (msg.msgType === 2) {
-          lastMsg.images.push(content)
-          lastMsg.time = formatTime(msg.createTime)
-          return 
-        }
-        if (msg.msgType === 1 && !lastMsg.content && lastMsg.images.length > 0) {
-           const parsed = parseMessageContent(content)
-           lastMsg.content = parsed.content
-           lastMsg.reasoning = parsed.reasoning
-           lastMsg.time = formatTime(msg.createTime)
-           lastMsg.status = status 
-           lastMsg.doctorSummary = doctorSummary // 更新 summary
-           return
-        }
-      }
-
+      // 🔥 历史消息合并逻辑：如果是 AI 消息，尝试解析出 reasoning
       const parsed = msg.msgType === 2 ? { content: '', reasoning: '' } : parseMessageContent(content)
+
       groupedMessages.push({
         id: msg.id,
         role: role,
         name: name,
         avatar: avatar,
-        content: parsed.content, 
-        reasoning: parsed.reasoning, 
+        fullContent: content, // 原始数据备用
+        content: parsed.content, // 用于 Markdown 渲染的正文
+        reasoning: parsed.reasoning, // 用于折叠面板展示的思考过程
         time: formatTime(msg.createTime),
         type: msg.msgType === 2 ? 'image' : 'text', 
         images: msg.msgType === 2 ? [content] : [],
         isThinking: false,
         status: status,
-        doctorSummary: doctorSummary // 存入对象
+        doctorSummary: doctorSummary 
       })
     })
 
@@ -217,17 +220,8 @@ const loadMessages = async (sessionId) => {
   }
 }
 
-const handleSelectSession = (session) => {
-  if (isSending.value) return ElMessage.warning('请等待当前对话结束')
-  activeSessionId.value = session.id
-  currentSession.value = session 
-  loadMessages(session.id)
-  uploadFiles.value = [] 
-}
-
 // === 核心发送逻辑 ===
 const handleSendMessage = async () => {
-  // 🔥🔥🔥 1. 状态拦截 🔥🔥🔥
   if (isInputDisabled.value) {
     ElMessage.warning('请等待医生审核上一条回复后再提问')
     return
@@ -239,10 +233,8 @@ const handleSendMessage = async () => {
   if (!text && !hasImages) return
   if (isSending.value) return
 
-  const currentUserAvatar = userStore.userInfo.avatar || 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'
-  const localImageUrls = uploadFiles.value.map(f => f.preview)
-  
   // 1. 用户消息上屏
+  const currentUserAvatar = userStore.userInfo.avatar || 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'
   chatHistory.value.push({
     id: Date.now(),
     role: 'user',
@@ -251,7 +243,7 @@ const handleSendMessage = async () => {
     content: text,
     time: formatTime(new Date()),
     type: 'text',
-    images: localImageUrls 
+    images: uploadFiles.value.map(f => f.preview) 
   })
 
   // 2. AI 占位消息
@@ -261,12 +253,13 @@ const handleSendMessage = async () => {
     role: 'ai',
     name: 'AI 医疗助手',
     avatar: '', 
-    content: '',
-    reasoning: '', 
+    fullContent: '', // 🔥 用来累积所有原始流数据
+    content: '',     // 🔥 累积正文
+    reasoning: '',   // 🔥 累积思考过程
     time: formatTime(new Date()),
     type: 'text',
     isThinking: true,
-    status: 0, // 默认为审核中
+    status: 0, 
     doctorSummary: null
   })
 
@@ -291,30 +284,15 @@ const handleSendMessage = async () => {
 
     if (serverImageUrls.length > 0) {
       apiUrl = `${apiPrefix}/user/ai/stream/images`
-      payload = {
-        chatId: activeSessionId.value,
-        message: text || ' ', 
-        imageUrls: serverImageUrls, 
-        enableDeepThinking: isDeepThinking.value,
-        enableRAG: useRAG 
-      }
+      payload = { chatId: activeSessionId.value, message: text || ' ', imageUrls: serverImageUrls, enableDeepThinking: isDeepThinking.value, enableRAG: useRAG }
     } else {
       apiUrl = `${apiPrefix}/user/ai/stream`
-      payload = {
-        chatId: activeSessionId.value,
-        message: text,
-        enableDeepThinking: isDeepThinking.value,
-        enableRAG: useRAG 
-      }
+      payload = { chatId: activeSessionId.value, message: text, enableDeepThinking: isDeepThinking.value, enableRAG: useRAG }
     }
 
     const response = await fetch(apiUrl, {
       method: 'POST',
-      headers: {
-        'Authentication': userToken || '', 
-        'Content-Type': 'application/json',
-        'Accept': 'text/event-stream'
-      },
+      headers: { 'Authentication': userToken || '', 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
       body: JSON.stringify(payload)
     })
 
@@ -324,6 +302,7 @@ const handleSendMessage = async () => {
     const decoder = new TextDecoder()
     let buffer = '' 
 
+    // === 🔥🔥🔥 流式数据处理核心修复 🔥🔥🔥 ===
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
@@ -341,22 +320,41 @@ const handleSendMessage = async () => {
 
         try {
           const data = JSON.parse(jsonStr)
-          if (data.thinking) currentAiMsg.reasoning += data.thinking
-          if (data.answer) currentAiMsg.content += data.answer
           
-          // 更新 status
-          if (data.status !== undefined) currentAiMsg.status = Number(data.status)
-          else if (data.msgStatus !== undefined) currentAiMsg.status = Number(data.msgStatus)
-          else if (data.msg_status !== undefined) currentAiMsg.status = Number(data.msg_status)
+          // 1. 处理思考过程 (DeepSeek 可能直接返回 thinking 字段)
+          if (data.thinking) {
+             currentAiMsg.reasoning += data.thinking
+          }
 
-          // 更新 doctorSummary
+          // 2. 处理正文内容
+          // 有些模型(如DeepSeek)可能会把思考过程混在 content 里 (<think>...</think>)
+          // 所以我们需要把收到的 content 拼接到 fullContent，然后实时解析
+          let chunkContent = ''
+          if (data.answer) chunkContent = data.answer
+          else if (data.content) chunkContent = data.content
+          
+          if (chunkContent) {
+            // 这里我们不做复杂的流式正则解析（太容易出错），
+            // 而是简单地：如果 content 里包含 <think> 标签，我们暂且不显示，
+            // 实际上 DeepSeek API 通常是 `thinking` 字段给思考，`content` 给正文，是分开的。
+            // 但如果您的后端是混在一起发的，我们用一个临时变量累积
+            currentAiMsg.fullContent += chunkContent
+            
+            // 尝试分离 (应对混在一起的情况)
+            const parsed = parseMessageContent(currentAiMsg.fullContent)
+            // 如果解析出了 reasoning，覆盖之前的（以防重复）
+            if (parsed.reasoning) currentAiMsg.reasoning = parsed.reasoning
+            // 正文部分
+            currentAiMsg.content = parsed.content
+          }
+
+          // 3. 状态更新
+          if (data.status !== undefined) currentAiMsg.status = Number(data.status)
           if (data.doctorSummary) currentAiMsg.doctorSummary = data.doctorSummary
 
           await new Promise(resolve => setTimeout(resolve, 10))
           scrollToBottom()
-        } catch (e) {
-          console.warn('JSON解析忽略:', e)
-        }
+        } catch (e) {}
       }
     }
   } catch (error) {
@@ -398,27 +396,50 @@ onMounted(() => {
       <div class="flex-1 overflow-y-auto custom-scrollbar px-3 pb-4 space-y-1">
         <div 
           v-for="session in sessionList" :key="session.id" @click="handleSelectSession(session)"
-          :class="['px-4 py-3 cursor-pointer transition-all duration-200 rounded-xl mb-1 border', activeSessionId === session.id ? 'bg-blue-50/80 border-blue-100 shadow-sm' : 'bg-transparent border-transparent hover:bg-slate-50']"
+          :class="[
+            'px-4 py-3 transition-all duration-200 rounded-xl mb-1 border relative overflow-hidden',
+            session.status !== 2 
+              ? 'bg-slate-50 border-transparent opacity-60 grayscale cursor-not-allowed' 
+              : (activeSessionId === session.id 
+                  ? 'bg-blue-50/80 border-blue-100 shadow-sm cursor-pointer' 
+                  : 'bg-transparent border-transparent hover:bg-slate-50 cursor-pointer')
+          ]"
         >
           <div class="flex gap-3.5 items-center">
             <div class="relative flex-shrink-0">
               <img :src="session.avatar" class="w-12 h-12 rounded-full bg-slate-100 object-cover border border-slate-100" />
-              <span v-if="session.online" class="absolute bottom-0.5 right-0.5 w-3 h-3 bg-emerald-500 border-2 border-white rounded-full"></span>
+              <span v-if="session.status === 2 && session.online" class="absolute bottom-0.5 right-0.5 w-3 h-3 bg-emerald-500 border-2 border-white rounded-full"></span>
+              <div v-if="session.status !== 2" class="absolute bottom-0 right-0 bg-slate-200 rounded-full p-0.5 border border-white">
+                 <el-icon :size="10" color="#666"><Lock /></el-icon>
+              </div>
             </div>
             <div class="flex-1 min-w-0">
               <div class="flex justify-between items-center mb-1">
-                <span class="font-bold text-slate-800 text-sm truncate" :class="activeSessionId === session.id ? 'text-blue-700' : ''">{{ session.name }}</span>
+                <span 
+                  class="font-bold text-sm truncate" 
+                  :class="session.status !== 2 ? 'text-slate-500' : (activeSessionId === session.id ? 'text-blue-700' : 'text-slate-800')"
+                >
+                  {{ session.name }}
+                </span>
                 <span class="text-[10px] text-slate-400 font-medium">{{ session.time }}</span>
               </div>
-              <p class="text-xs truncate" :class="activeSessionId === session.id ? 'text-blue-600/70' : 'text-slate-500'">{{ session.lastMsg }}</p>
+              <p 
+                class="text-xs truncate" 
+                :class="activeSessionId === session.id ? 'text-blue-600/70' : 'text-slate-500'"
+              >
+                {{ session.status !== 2 ? '等待医生审核中...' : session.lastMsg }}
+              </p>
             </div>
           </div>
         </div>
       </div>
     </div>
 
-    <div class="flex-1 flex flex-col bg-[#F8F9FB] relative">
-      
+    <div v-if="!currentSession.id" class="flex-1 flex flex-col items-center justify-center bg-[#F8F9FB] text-slate-400">
+       <el-empty description="请选择一个已建立连接的会话" />
+    </div>
+
+    <div v-else class="flex-1 flex flex-col bg-[#F8F9FB] relative">
       <div class="h-[64px] bg-white border-b border-slate-100 px-6 flex items-center justify-between flex-shrink-0 z-10 sticky top-0">
         <div class="flex items-center">
            <div class="flex items-center mr-3">
@@ -428,7 +449,7 @@ onMounted(() => {
               <img :src="currentSession.avatar || 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'" class="w-9 h-9 rounded-full border-2 border-white -ml-3 relative z-10 bg-slate-200 object-cover" />
            </div>
            <div class="flex items-center gap-2">
-             <h3 class="font-bold text-slate-800 text-[15px]">AI 医疗助手 + {{ currentSession.name || '张主任' }}</h3>
+             <h3 class="font-bold text-slate-800 text-[15px]">AI 医疗助手 + {{ currentSession.name || '医生' }}</h3>
              <span class="px-2 py-0.5 bg-indigo-50 text-indigo-600 text-[10px] font-bold rounded-md border border-indigo-100 tracking-wide">AI CO-PILOT</span>
            </div>
         </div>
@@ -459,15 +480,13 @@ onMounted(() => {
                       <el-collapse-item name="1">
                         <template #title>
                           <div class="flex items-center gap-2 text-xs font-bold select-none px-3 py-1 rounded-lg transition-colors hover:bg-slate-200/50 cursor-pointer w-full">
-                            <div class="flex items-center justify-center w-5 h-5 rounded bg-violet-100 text-violet-600">
-                                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
-                            </div>
+                            <div class="flex items-center justify-center w-5 h-5 rounded bg-violet-100 text-violet-600"><el-icon><Cpu /></el-icon></div>
                             <span class="text-slate-600">深度思考链路</span>
                             <span class="text-[10px] text-slate-400 font-normal ml-auto">{{ msg.reasoning.length }}字</span>
                           </div>
                         </template>
                         <div class="mt-2 mx-1 relative overflow-hidden rounded-r-lg border-l-4 border-violet-400 bg-white shadow-sm ring-1 ring-slate-900/5">
-                          <div class="p-4 text-xs text-slate-600 font-mono leading-relaxed whitespace-pre-wrap bg-slate-50/50">
+                          <div class="p-4 text-xs text-slate-600 font-mono leading-relaxed whitespace-pre-wrap bg-slate-50/50 max-h-60 overflow-y-auto custom-scrollbar">
                             {{ msg.reasoning }}
                             <span v-if="msg.isThinking && !msg.content" class="inline-block w-2 h-4 bg-violet-400 animate-pulse align-middle ml-1"></span>
                           </div>
@@ -487,14 +506,12 @@ onMounted(() => {
                    </div>
 
                    <div v-if="msg.doctorSummary" class="mt-3 ml-1 animate-fade-in-up">
-                      <div class="bg-blue-50 border border-blue-100 rounded-xl p-3 relative">
-                        <div class="absolute -top-1.5 left-4 w-3 h-3 bg-blue-50 border-t border-l border-blue-100 transform rotate-45"></div>
+                      <div class="bg-green-50 border border-green-100 rounded-xl p-3 relative">
+                        <div class="absolute -top-1.5 left-4 w-3 h-3 bg-green-50 border-t border-l border-green-100 transform rotate-45"></div>
                         <div class="flex items-start gap-2">
-                          <div class="mt-0.5 p-1 bg-blue-100 rounded-md text-blue-600">
-                            <el-icon :size="14"><EditPen /></el-icon>
-                          </div>
+                          <div class="mt-0.5 p-1 bg-green-100 rounded-md text-green-600"><el-icon :size="14"><EditPen /></el-icon></div>
                           <div>
-                            <div class="text-xs font-bold text-blue-700 mb-1">医生批注 & 总结</div>
+                            <div class="text-xs font-bold text-green-900 mb-1">医生批注 & 总结</div>
                             <div class="text-sm text-slate-700 leading-relaxed text-justify">{{ msg.doctorSummary }}</div>
                           </div>
                         </div>
@@ -608,6 +625,7 @@ onMounted(() => {
 </template>
 
 <style scoped>
+/* 保持原有样式不变 */
 @keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 .animate-fade-in-up { animation: fadeInUp 0.3s ease-out forwards; }
 .custom-scrollbar::-webkit-scrollbar { width: 5px; }
@@ -622,8 +640,6 @@ onMounted(() => {
 :deep(.el-collapse-item__content) { padding-bottom: 0; }
 .markdown-body { font-size: 15px; line-height: 1.75; color: #334155; }
 .markdown-body :deep(h1), .markdown-body :deep(h2), .markdown-body :deep(h3) { font-weight: 700; color: #1e293b; margin-top: 1.2em; margin-bottom: 0.6em; line-height: 1.3; }
-.markdown-body :deep(h1), .markdown-body :deep(h2) { font-size: 17px; position: relative; padding-left: 12px; }
-.markdown-body :deep(h1)::before, .markdown-body :deep(h2)::before { content: ''; position: absolute; left: 0; top: 4px; bottom: 4px; width: 4px; background: #3b82f6; border-radius: 2px; }
 .markdown-body :deep(ul), .markdown-body :deep(ol) { margin-bottom: 1em; padding-left: 1.5em; }
 .markdown-body :deep(li) { margin-bottom: 0.4em; position: relative; }
 .markdown-body :deep(ul) { list-style: none; }

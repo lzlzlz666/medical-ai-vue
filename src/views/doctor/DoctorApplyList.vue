@@ -146,7 +146,7 @@ const tableData = ref([])
 
 const queryParams = reactive({
   queryDate: new Date().toISOString().split('T')[0],
-  status: 1,
+  status: null,
   page: 1,
   pageSize: 10
 })
@@ -235,15 +235,9 @@ const handleTabChange = (val) => { queryParams.status = val; queryParams.page = 
 const handlePageChange = (val) => { queryParams.page = val; loadData() }
 
 // 跳转详情页
-const goToReview = (row) => {
+const goToReview = () => {
   router.push({
-    name: 'DoctorReview', 
-    query: {
-      id: row.id,
-      name: row.username || '患者',
-      userId: row.userId,
-      avatar: row.avatar
-    }
+    path: '/doctor/audit'
   })
 }
 
@@ -251,7 +245,7 @@ const handleRowClick = (row) => {
   if (row.status === 1) {
     // 只有今天是待审核状态，且是今天的单子，才建议跳转去处理
     // 不过查看详情一般允许查看历史，这里不做拦截，仅拦截操作按钮
-    goToReview(row)
+    goToReview()
   }
 }
 
@@ -265,7 +259,7 @@ const handleAccept = async (row) => {
   try {
     await auditConsultation({ userId: row.userId, status: 2 })
     ElMessage.success('已成功接收')
-    goToReview(row)
+    goToReview()
   } catch (e) {
     console.error('接受失败', e)
   }

@@ -132,3 +132,31 @@ export function auditConsultation(params) {
     }
   })
 }
+
+// 🔥🔥🔥 获取指定会话的历史聊天记录 🔥🔥🔥
+//  GET /doctor/user/messages/{sessionId}
+export function getHistoryMessages(sessionId) {
+  return request({
+    url: `/doctor/user/messages/${sessionId}`,
+    method: 'get'
+  })
+}
+
+// 4. 文件上传 (头像)
+export function uploadDoctorFile(formData) {
+  return request({
+    url: '/doctor/common/upload',
+    method: 'post',
+    headers: { 'Content-Type': 'multipart/form-data' },
+    data: formData
+  })
+}
+
+// src/api/doctor.js
+export function updateDoctorProfile(data) {
+  return request({
+    url: '/doctor/doctor/profile', // 对应后端 @PutMapping("/profile")
+    method: 'put',
+    data: data // 传入 DoctorEditDTO 对象 { workStatus, avatar }
+  })
+}

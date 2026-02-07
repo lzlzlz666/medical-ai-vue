@@ -109,6 +109,11 @@ const router = createRouter({
           component: () => import('@/views/doctor/DoctorAudit.vue'), // 列表页
           meta: { title: '咨询申请管理' }
         },
+        {
+          path: 'profile',
+          name: 'DoctorProfile',
+          component: () => import('@/views/doctor/DoctorProfile.vue')
+        },
       ]
     },
 
